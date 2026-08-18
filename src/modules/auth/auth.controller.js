@@ -24,6 +24,12 @@ const verifyOtp = async (req, res) => {
   res.status(200).json(result);
 };
 
+const verifyWidgetToken = async (req, res) => {
+  const { accessToken } = req.body;
+  const result = await authService.verifyWidgetToken(accessToken);
+  res.status(200).json(result);
+};
+
 const refreshToken = async (req, res) => {
   const { refreshToken } = req.body;
   const result = await authService.refreshToken(refreshToken);
@@ -35,4 +41,4 @@ const logout = async (req, res) => {
   res.status(200).json({ message: 'Logged out successfully' });
 };
 
-module.exports = { register, login, sendOtp, verifyOtp, refreshToken, logout };
+module.exports = { register, login, sendOtp, verifyOtp, verifyWidgetToken, refreshToken, logout };

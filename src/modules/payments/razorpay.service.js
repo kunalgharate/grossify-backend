@@ -1,10 +1,26 @@
 const Razorpay = require('razorpay');
 const config = require('../../shared/config');
 
-const razorpay = new Razorpay({
-  key_id: config.razorpay.keyId,
-  key_secret: config.razorpay.keySecret,
-});
+/**
+ * Lazy-initialized Razorpay instance.
+ * Avoids crashing at startup if env vars are not yet configured.
+ */
+let _razorpay = null;
+
+const getRazorpayInstance = () => {
+  if (!_razorpay) {
+    if (!config.razorpay.keyId || !config.razorpay.keySecret) {
+      throw new Error(
+        'Razorpay credentials not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET environment variables.'
+      );
+    }
+    _razorpay = new Razorpay({
+      key_id: config.razorpay.keyId,
+      key_secret: config.razorpay.keySecret,
+    });
+  }
+  return _razorpay;
+};
 
 /**
  * Create a Razorpay order (for customer checkout)
@@ -23,7 +39,7 @@ const createOrder = async (amount, receipt, transfers = null) => {
     options.transfers = transfers;
   }
 
-  const order = await razorpay.orders.create(options);
+  const order = await getRazorpayInstance().orders.create(options);
   return order;
 };
 
@@ -40,17 +56,17 @@ const createLinkedAccount = async (vendorData) => {
  * Fetch payment details
  */
 const fetchPayment = async (paymentId) => {
-  return razorpay.payments.fetch(paymentId);
+  return getRazorpayInstance().payments.fetch(paymentId);
 };
 
 /**
  * Process refund
  */
 const refund = async (paymentId, amount, notes = {}) => {
-  return razorpay.payments.refund(paymentId, {
+  return getRazorpayInstance().payments.refund(paymentId, {
     amount: Math.round(amount * 100), // paise
     notes,
   });
 };
 
-module.exports = { razorpay, createOrder, createLinkedAccount, fetchPayment, refund };
+module.exports = { getRazorpayInstance, createOrder, createLinkedAccount, fetchPayment, refund };

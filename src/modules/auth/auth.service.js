@@ -6,6 +6,31 @@ const config = require('../../shared/config');
 const msg91 = require('./msg91.service');
 
 /**
+ * Normalize phone number to consistent format: +<countrycode><number>
+ * Handles: "+91 9876543210", "919876543210", "+919876543210", "9876543210"
+ */
+function normalizePhone(phone) {
+  // Remove spaces, dashes, parentheses
+  let cleaned = phone.replace(/[\s\-()]/g, '');
+
+  // If starts with +, keep as is
+  if (cleaned.startsWith('+')) return cleaned;
+
+  // If starts with country code (91) and is 12 digits, add +
+  if (cleaned.length === 12 && cleaned.startsWith('91')) {
+    return '+' + cleaned;
+  }
+
+  // If 10 digits (Indian local number), prepend +91
+  if (cleaned.length === 10) {
+    return '+91' + cleaned;
+  }
+
+  // Default: prepend + if not present
+  return '+' + cleaned;
+}
+
+/**
  * Register a new user with name, email, phone, password
  */
 const register = async ({ name, email, phone, password, role = 'CUSTOMER' }) => {
@@ -13,7 +38,9 @@ const register = async ({ name, email, phone, password, role = 'CUSTOMER' }) => 
     throw new BadRequestError('Name, phone, and password are required');
   }
 
-  const existing = await prisma.user.findUnique({ where: { phone } });
+  const normalizedPhone = normalizePhone(phone);
+
+  const existing = await prisma.user.findUnique({ where: { phone: normalizedPhone } });
   if (existing) throw new ConflictError('Phone number already registered');
 
   if (email) {
@@ -24,7 +51,7 @@ const register = async ({ name, email, phone, password, role = 'CUSTOMER' }) => 
   const passwordHash = await bcrypt.hash(password, 12);
 
   const user = await prisma.user.create({
-    data: { name, email: email || null, phone, passwordHash, status: 'ACTIVE' },
+    data: { name, email: email || null, phone: normalizedPhone, passwordHash, status: 'ACTIVE' },
     select: { id: true, name: true, email: true, phone: true, status: true, createdAt: true },
   });
 
@@ -38,8 +65,12 @@ const register = async ({ name, email, phone, password, role = 'CUSTOMER' }) => 
 const login = async ({ identifier, password }) => {
   if (!identifier || !password) throw new BadRequestError('Phone/email and password are required');
 
+  // If identifier looks like a phone number, normalize it
+  const isPhone = /^[+\d\s\-()]+$/.test(identifier) && identifier.replace(/\D/g, '').length >= 10;
+  const normalizedIdentifier = isPhone ? normalizePhone(identifier) : identifier;
+
   const user = await prisma.user.findFirst({
-    where: { OR: [{ phone: identifier }, { email: identifier }] },
+    where: { OR: [{ phone: normalizedIdentifier }, { email: normalizedIdentifier }] },
   });
 
   if (!user) throw new UnauthorizedError('Invalid credentials');
@@ -64,13 +95,15 @@ const login = async ({ identifier, password }) => {
 const sendOtp = async (phone) => {
   if (!phone) throw new BadRequestError('Phone number is required');
 
-  const result = await msg91.sendOtp(phone);
+  // Normalize phone: strip spaces, ensure + prefix for Indian numbers
+  const normalizedPhone = normalizePhone(phone);
+  const result = await msg91.sendOtp(normalizedPhone);
 
   if (!result.success) {
     throw new BadRequestError(result.message || 'Failed to send OTP');
   }
 
-  return { message: 'OTP sent successfully', phone };
+  return { message: 'OTP sent successfully', phone: normalizedPhone };
 };
 
 /**
@@ -79,19 +112,60 @@ const sendOtp = async (phone) => {
 const verifyOtp = async (phone, otp) => {
   if (!phone || !otp) throw new BadRequestError('Phone and OTP are required');
 
-  const result = await msg91.verifyOtp(phone, otp);
+  // Normalize phone for consistent storage/lookup
+  const normalizedPhone = normalizePhone(phone);
+  const result = await msg91.verifyOtp(normalizedPhone, otp);
 
   if (!result.success) {
     throw new UnauthorizedError('Invalid or expired OTP');
   }
 
   // Find or create user
-  let user = await prisma.user.findUnique({ where: { phone } });
+  let user = await prisma.user.findUnique({ where: { phone: normalizedPhone } });
   let isNewUser = false;
 
   if (!user) {
     user = await prisma.user.create({
-      data: { phone, status: 'ACTIVE' },
+      data: { phone: normalizedPhone, status: 'ACTIVE' },
+    });
+    isNewUser = true;
+  }
+
+  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+
+  const tokens = generateTokens(user.id);
+  return {
+    user: { id: user.id, name: user.name, phone: user.phone, isNewUser },
+    ...tokens,
+  };
+};
+
+/**
+ * Verify MSG91 Widget token and return auth tokens (creates user if not exists)
+ * Used when frontend uses MSG91 OTP Widget instead of direct API
+ */
+const verifyWidgetToken = async (accessToken) => {
+  if (!accessToken) throw new BadRequestError('Access token is required');
+
+  const result = await msg91.verifyWidgetToken(accessToken);
+
+  if (!result.success) {
+    throw new UnauthorizedError(result.message || 'Widget token verification failed');
+  }
+
+  const phone = result.phone;
+  if (!phone) throw new BadRequestError('Could not extract phone number from token');
+
+  // Normalize phone for consistent storage/lookup
+  const normalizedPhone = normalizePhone(phone);
+
+  // Find or create user (same as OTP verify flow)
+  let user = await prisma.user.findUnique({ where: { phone: normalizedPhone } });
+  let isNewUser = false;
+
+  if (!user) {
+    user = await prisma.user.create({
+      data: { phone: normalizedPhone, status: 'ACTIVE' },
     });
     isNewUser = true;
   }
@@ -132,4 +206,4 @@ function generateTokens(userId) {
   return { accessToken, refreshToken };
 }
 
-module.exports = { register, login, sendOtp, verifyOtp, refreshToken, logout };
+module.exports = { register, login, sendOtp, verifyOtp, verifyWidgetToken, refreshToken, logout };
