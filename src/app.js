@@ -44,11 +44,10 @@ app.use(helmet());
 
 // ─── CORS ─────────────────────────────────────────────────
 app.use(cors({
-  origin: config.nodeEnv === 'production'
-    ? [config.app.url]
-    : '*',
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  origin: true, // reflect request origin (allows all origins with credentials)
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
 }));
 
 // ─── Rate Limiting (100 req/min per IP) ───────────────────
@@ -60,7 +59,12 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // ─── Body Parsing ─────────────────────────────────────────
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '10mb',
+  // Capture the raw body so webhook handlers can verify provider signatures
+  // against the exact bytes received (re-serialized JSON would break the HMAC).
+  verify: (req, _res, buf) => { req.rawBody = buf; },
+}));
 app.use(express.urlencoded({ extended: true }));
 
 // ─── Compression ──────────────────────────────────────────

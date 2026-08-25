@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { prisma } = require('../../shared/database');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
-const { authenticate } = require('../../shared/middleware/auth');
+const { authenticate, requireDeliveryAgent, requireStaff } = require('../../shared/middleware/auth');
 const { BadRequestError, NotFoundError } = require('../../shared/errors');
+const { emitDeliveryLocation } = require('../../websocket/socket.handlers');
 
 /**
  * @swagger
@@ -110,7 +111,7 @@ router.post('/register', authenticate, asyncHandler(async (req, res) => {
  *       200:
  *         description: Agent profile
  */
-router.get('/profile', authenticate, asyncHandler(async (req, res) => {
+router.get('/profile', authenticate, requireDeliveryAgent, asyncHandler(async (req, res) => {
   const agent = await prisma.deliveryAgent.findUnique({
     where: { userId: req.user.id },
     include: { user: { select: { name: true, phone: true, email: true } } },
@@ -149,7 +150,7 @@ router.get('/profile', authenticate, asyncHandler(async (req, res) => {
  *       200:
  *         description: Profile updated
  */
-router.put('/profile', authenticate, asyncHandler(async (req, res) => {
+router.put('/profile', authenticate, requireDeliveryAgent, asyncHandler(async (req, res) => {
   const agent = await prisma.deliveryAgent.findUnique({ where: { userId: req.user.id } });
   if (!agent) throw new NotFoundError('Not registered as delivery agent');
 
@@ -187,7 +188,7 @@ router.put('/profile', authenticate, asyncHandler(async (req, res) => {
  *       200:
  *         description: Now online
  */
-router.patch('/go-online', authenticate, asyncHandler(async (req, res) => {
+router.patch('/go-online', authenticate, requireDeliveryAgent, asyncHandler(async (req, res) => {
   const { lat, lng } = req.body;
   if (!lat || !lng) throw new BadRequestError('Location (lat, lng) required');
 
@@ -215,7 +216,7 @@ router.patch('/go-online', authenticate, asyncHandler(async (req, res) => {
  *       200:
  *         description: Now offline
  */
-router.patch('/go-offline', authenticate, asyncHandler(async (req, res) => {
+router.patch('/go-offline', authenticate, requireDeliveryAgent, asyncHandler(async (req, res) => {
   const agent = await prisma.deliveryAgent.findUnique({ where: { userId: req.user.id } });
   if (!agent) throw new NotFoundError('Not registered as delivery agent');
 
@@ -247,14 +248,25 @@ router.patch('/go-offline', authenticate, asyncHandler(async (req, res) => {
  *       200:
  *         description: Location updated
  */
-router.patch('/update-location', authenticate, asyncHandler(async (req, res) => {
+router.patch('/update-location', authenticate, requireDeliveryAgent, asyncHandler(async (req, res) => {
   const { lat, lng } = req.body;
-  if (!lat || !lng) throw new BadRequestError('lat and lng required');
+  if (lat == null || lng == null) throw new BadRequestError('lat and lng required');
 
   await prisma.deliveryAgent.update({
     where: { userId: req.user.id },
     data: { currentLat: lat, currentLng: lng },
   });
+
+  // Relay the fix to any customer whose order this agent is actively carrying,
+  // so their live-tracking map moves. This is what finally wires the previously
+  // dormant emitDeliveryLocation helper into a real code path.
+  const activeOrders = await prisma.order.findMany({
+    where: { deliveryAgentId: req.user.id, status: 'PICKED' },
+    select: { id: true, customerId: true },
+  });
+  for (const o of activeOrders) {
+    emitDeliveryLocation(o.customerId, o.id, { lat, lng });
+  }
 
   res.json({ message: 'Location updated' });
 }));
@@ -278,7 +290,7 @@ router.patch('/update-location', authenticate, asyncHandler(async (req, res) => 
  *       200:
  *         description: Agent verified and activated
  */
-router.patch('/verify/:id', authenticate, asyncHandler(async (req, res) => {
+router.patch('/verify/:id', authenticate, requireStaff, asyncHandler(async (req, res) => {
   const agent = await prisma.deliveryAgent.findUnique({ where: { id: req.params.id } });
   if (!agent) throw new NotFoundError('Agent not found');
 
@@ -312,7 +324,7 @@ router.patch('/verify/:id', authenticate, asyncHandler(async (req, res) => {
  *       200:
  *         description: Pending agents list
  */
-router.get('/pending', authenticate, asyncHandler(async (req, res) => {
+router.get('/pending', authenticate, requireStaff, asyncHandler(async (req, res) => {
   const agents = await prisma.deliveryAgent.findMany({
     where: { status: 'pending' },
     include: { user: { select: { id: true, name: true, phone: true } } },

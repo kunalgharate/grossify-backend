@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authController = require('./auth.controller');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
+const { authenticate } = require('../../shared/middleware/auth');
 
 /**
  * @swagger
@@ -264,5 +265,45 @@ router.post('/refresh-token', asyncHandler(authController.refreshToken));
  *         description: Logged out successfully
  */
 router.post('/logout', asyncHandler(authController.logout));
+
+/**
+ * @swagger
+ * /api/v1/auth/me:
+ *   get:
+ *     summary: Get the authenticated user's profile and resolved roles
+ *     description: |
+ *       Returns the current user plus their effective roles for client routing.
+ *       `primaryRole` is the highest-privilege role (admin > manager > support >
+ *       delivery > vendor > customer) and drives default post-login navigation.
+ *       `store` is the user's owned store (if any), so the vendor app has its
+ *       store context. Call this on app start when a token is already stored.
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current user with roles
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 user:
+ *                   type: object
+ *                 roles:
+ *                   type: array
+ *                   items:
+ *                     type: string
+ *                   example: ["customer", "vendor"]
+ *                 primaryRole:
+ *                   type: string
+ *                   example: vendor
+ *                 store:
+ *                   type: object
+ *                   nullable: true
+ *       401:
+ *         description: Not authenticated
+ */
+router.get('/me', authenticate, asyncHandler(authController.me));
 
 module.exports = router;

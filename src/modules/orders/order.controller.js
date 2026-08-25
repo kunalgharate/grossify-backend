@@ -12,19 +12,19 @@ const list = async (req, res) => {
 };
 
 const getById = async (req, res) => {
-  const order = await orderService.getById(req.params.id);
+  const order = await orderService.getById(req.params.id, req.user);
   res.status(200).json({ order });
 };
 
 const updateStatus = async (req, res) => {
   const { status } = req.body;
-  const order = await orderService.updateStatus(req.params.id, status, req.user.id);
+  const order = await orderService.updateStatus(req.params.id, status, req.user);
   res.status(200).json({ order, message: 'Order status updated' });
 };
 
 const cancel = async (req, res) => {
   const { reason } = req.body;
-  const order = await orderService.cancel(req.params.id, req.user.id, reason);
+  const order = await orderService.cancel(req.params.id, req.user, reason);
   res.status(200).json({ order, message: 'Order cancelled' });
 };
 

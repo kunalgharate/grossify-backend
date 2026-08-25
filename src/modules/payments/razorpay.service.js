@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const Razorpay = require('razorpay');
 const config = require('../../shared/config');
 
@@ -69,4 +70,59 @@ const refund = async (paymentId, amount, notes = {}) => {
   });
 };
 
-module.exports = { getRazorpayInstance, createOrder, createLinkedAccount, fetchPayment, refund };
+/**
+ * Constant-time string comparison that won't throw on length mismatch.
+ */
+const timingSafeEqual = (a, b) => {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+};
+
+/**
+ * Whether Razorpay credentials (key id + secret) are configured.
+ */
+const isConfigured = () => Boolean(config.razorpay.keyId && config.razorpay.keySecret);
+
+/**
+ * Verify the checkout signature the client returns after payment.
+ * signature = HMAC_SHA256(`${razorpay_order_id}|${razorpay_payment_id}`, key_secret)
+ * @returns {boolean}
+ */
+const verifyPaymentSignature = ({ razorpay_order_id, razorpay_payment_id, razorpay_signature }) => {
+  if (!config.razorpay.keySecret) return false;
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) return false;
+  const expected = crypto
+    .createHmac('sha256', config.razorpay.keySecret)
+    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+    .digest('hex');
+  return timingSafeEqual(expected, razorpay_signature);
+};
+
+/**
+ * Verify a Razorpay webhook signature over the RAW request body (not
+ * re-serialized JSON — key order/spacing would change the HMAC).
+ * @param {string|Buffer} rawBody - exact bytes received
+ * @param {string} signature - X-Razorpay-Signature header value
+ * @returns {boolean}
+ */
+const verifyWebhookSignature = (rawBody, signature) => {
+  if (!config.razorpay.webhookSecret || !signature || rawBody == null) return false;
+  const expected = crypto
+    .createHmac('sha256', config.razorpay.webhookSecret)
+    .update(typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8'))
+    .digest('hex');
+  return timingSafeEqual(expected, signature);
+};
+
+module.exports = {
+  getRazorpayInstance,
+  createOrder,
+  createLinkedAccount,
+  fetchPayment,
+  refund,
+  isConfigured,
+  verifyPaymentSignature,
+  verifyWebhookSignature,
+};

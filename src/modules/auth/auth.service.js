@@ -1,7 +1,8 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { prisma } = require('../../shared/database');
-const { BadRequestError, UnauthorizedError, ConflictError } = require('../../shared/errors');
+const { BadRequestError, UnauthorizedError, ConflictError, NotFoundError } = require('../../shared/errors');
+const { mapDbRolesToLogical, pickPrimaryRole } = require('../../shared/roles');
 const config = require('../../shared/config');
 const msg91 = require('./msg91.service');
 
@@ -31,6 +32,41 @@ function normalizePhone(phone) {
 }
 
 /**
+ * Resolve a user's effective roles for client routing and RBAC hints.
+ * - "customer" is always included (anyone can shop).
+ * - "vendor" is implied by owning at least one store.
+ * - "delivery" is implied by having a delivery-agent profile.
+ * - staff roles (admin/manager/support/…) come from the RBAC UserRole table.
+ * `primaryRole` (highest privilege) drives default post-login routing; `store`
+ * gives the vendor app its store context without an extra round-trip.
+ */
+const resolveUserContext = async (userId) => {
+  const [store, deliveryProfile, userRoles] = await Promise.all([
+    prisma.store.findFirst({
+      where: { ownerId: userId },
+      select: { id: true, name: true, slug: true, status: true, logoUrl: true },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.deliveryAgent.findUnique({ where: { userId }, select: { id: true, status: true } }),
+    prisma.userRole.findMany({ where: { userId }, include: { role: { select: { name: true } } } }),
+  ]);
+
+  const roles = new Set(['customer']);
+  // Reconcile seeded Title-Case DB role names ("Super Admin", "Support Agent",
+  // …) to the lowercase logical roles the client routes on. Comparing raw DB
+  // names against lowercase strings here was the long-standing bug that left
+  // staff without their admin/manager/support role after login.
+  const staffLogical = mapDbRolesToLogical(userRoles.map((ur) => ur.role && ur.role.name));
+  for (const role of staffLogical) roles.add(role);
+  if (store) roles.add('vendor');
+  if (deliveryProfile) roles.add('delivery');
+
+  const primaryRole = pickPrimaryRole(roles);
+
+  return { roles: Array.from(roles), primaryRole, store: store || null };
+};
+
+/**
  * Register a new user with name, email, phone, password
  */
 const register = async ({ name, email, phone, password, role = 'CUSTOMER' }) => {
@@ -56,7 +92,8 @@ const register = async ({ name, email, phone, password, role = 'CUSTOMER' }) => 
   });
 
   const tokens = generateTokens(user.id);
-  return { user, ...tokens };
+  const context = await resolveUserContext(user.id);
+  return { user, ...context, ...tokens };
 };
 
 /**
@@ -83,8 +120,10 @@ const login = async ({ identifier, password }) => {
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
   const tokens = generateTokens(user.id);
+  const context = await resolveUserContext(user.id);
   return {
     user: { id: user.id, name: user.name, email: user.email, phone: user.phone, status: user.status },
+    ...context,
     ...tokens,
   };
 };
@@ -134,8 +173,10 @@ const verifyOtp = async (phone, otp) => {
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
   const tokens = generateTokens(user.id);
+  const context = await resolveUserContext(user.id);
   return {
     user: { id: user.id, name: user.name, phone: user.phone, isNewUser },
+    ...context,
     ...tokens,
   };
 };
@@ -173,8 +214,10 @@ const verifyWidgetToken = async (accessToken) => {
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
   const tokens = generateTokens(user.id);
+  const context = await resolveUserContext(user.id);
   return {
     user: { id: user.id, name: user.name, phone: user.phone, isNewUser },
+    ...context,
     ...tokens,
   };
 };
@@ -200,10 +243,24 @@ const logout = async () => {
   return true;
 };
 
+/**
+ * Return the authenticated user's profile plus resolved role context. Used by
+ * the client on app start (token present) to decide customer vs vendor routing.
+ */
+const me = async (userId) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, email: true, phone: true, status: true, createdAt: true },
+  });
+  if (!user) throw new NotFoundError('User not found');
+  const context = await resolveUserContext(userId);
+  return { user, ...context };
+};
+
 function generateTokens(userId) {
   const accessToken = jwt.sign({ userId }, config.jwt.secret, { expiresIn: config.jwt.expiresIn });
   const refreshToken = jwt.sign({ userId }, config.jwt.secret + '_refresh', { expiresIn: config.jwt.refreshExpiresIn });
   return { accessToken, refreshToken };
 }
 
-module.exports = { register, login, sendOtp, verifyOtp, verifyWidgetToken, refreshToken, logout };
+module.exports = { register, login, sendOtp, verifyOtp, verifyWidgetToken, refreshToken, logout, me };

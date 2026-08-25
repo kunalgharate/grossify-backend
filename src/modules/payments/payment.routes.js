@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const crypto = require('crypto');
 const { prisma } = require('../../shared/database');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate } = require('../../shared/middleware/auth');
-const { BadRequestError } = require('../../shared/errors');
+const { BadRequestError, NotFoundError, ForbiddenError } = require('../../shared/errors');
 const config = require('../../shared/config');
+const razorpayService = require('./razorpay.service');
 
 /**
  * @swagger
@@ -49,31 +49,45 @@ router.post('/verify', authenticate, asyncHandler(async (req, res) => {
     throw new BadRequestError('All payment fields are required');
   }
 
-  // Verify signature
-  if (config.razorpay.keySecret) {
-    const generated = crypto.createHmac('sha256', config.razorpay.keySecret)
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest('hex');
-
-    if (generated !== razorpay_signature) {
-      throw new BadRequestError('Payment verification failed - signature mismatch');
-    }
+  // Load the payment + its order, and enforce ownership (a customer can only
+  // verify a payment that belongs to their own order).
+  const payment = await prisma.payment.findUnique({
+    where: { razorpayOrderId: razorpay_order_id },
+    include: { order: { select: { id: true, customerId: true } } },
+  });
+  if (!payment) throw new NotFoundError('Payment not found for this Razorpay order');
+  if (payment.order.customerId !== req.user.id) {
+    throw new ForbiddenError('You cannot verify this payment');
   }
 
-  // Update payment record
-  const payment = await prisma.payment.findUnique({ where: { razorpayOrderId: razorpay_order_id } });
-  if (payment) {
-    await prisma.payment.update({
+  // Idempotent: if already paid, return success without re-processing.
+  if (payment.status === 'PAID') {
+    return res.json({ verified: true, paymentId: payment.razorpayPaymentId, alreadyProcessed: true });
+  }
+
+  // Signature verification. Enforced whenever credentials exist; in production
+  // missing credentials is a hard failure (never a silent pass).
+  if (razorpayService.isConfigured()) {
+    const ok = razorpayService.verifyPaymentSignature({
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    });
+    if (!ok) throw new BadRequestError('Payment verification failed - signature mismatch');
+  } else if (config.nodeEnv === 'production') {
+    throw new BadRequestError('PAYMENT_UNAVAILABLE: online payment is not configured');
+  }
+
+  await prisma.$transaction([
+    prisma.payment.update({
       where: { id: payment.id },
       data: { razorpayPaymentId: razorpay_payment_id, status: 'PAID', paidAt: new Date() },
-    });
-
-    // Update order payment status
-    await prisma.order.update({
+    }),
+    prisma.order.update({
       where: { id: payment.orderId },
       data: { paymentStatus: 'PAID' },
-    });
-  }
+    }),
+  ]);
 
   res.json({ verified: true, paymentId: razorpay_payment_id });
 }));
@@ -96,17 +110,16 @@ router.post('/verify', authenticate, asyncHandler(async (req, res) => {
  */
 router.post('/webhook', asyncHandler(async (req, res) => {
   const signature = req.headers['x-razorpay-signature'];
-  const body = JSON.stringify(req.body);
 
-  // Verify webhook signature if secret configured
-  if (config.razorpay.webhookSecret && signature) {
-    const expected = crypto.createHmac('sha256', config.razorpay.webhookSecret)
-      .update(body)
-      .digest('hex');
-
-    if (expected !== signature) {
-      return res.status(400).json({ error: 'Invalid webhook signature' });
+  // Signature verification over the RAW body. Enforced in production; in other
+  // environments enforced only when a webhook secret is configured.
+  if (config.razorpay.webhookSecret) {
+    const ok = razorpayService.verifyWebhookSignature(req.rawBody, signature);
+    if (!ok) {
+      return res.status(400).json({ error: 'INVALID_SIGNATURE', message: 'Invalid webhook signature' });
     }
+  } else if (config.nodeEnv === 'production') {
+    return res.status(400).json({ error: 'WEBHOOK_NOT_CONFIGURED', message: 'Webhook secret is not configured' });
   }
 
   const event = req.body.event;
@@ -117,36 +130,52 @@ router.post('/webhook', asyncHandler(async (req, res) => {
       const paymentId = payload?.payment?.entity?.id;
       const orderId = payload?.payment?.entity?.order_id;
       if (orderId) {
-        await prisma.payment.updateMany({
-          where: { razorpayOrderId: orderId },
-          data: { razorpayPaymentId: paymentId, status: 'PAID', paidAt: new Date() },
-        });
+        const payment = await prisma.payment.findUnique({ where: { razorpayOrderId: orderId } });
+        // Idempotent: Razorpay retries webhooks — only act if not already paid.
+        if (payment && payment.status !== 'PAID') {
+          await prisma.$transaction([
+            prisma.payment.update({
+              where: { id: payment.id },
+              data: { razorpayPaymentId: paymentId, status: 'PAID', paidAt: new Date() },
+            }),
+            prisma.order.update({
+              where: { id: payment.orderId },
+              data: { paymentStatus: 'PAID' },
+            }),
+          ]);
+        }
       }
       break;
     }
     case 'payment.failed': {
       const orderId = payload?.payment?.entity?.order_id;
       if (orderId) {
-        await prisma.payment.updateMany({
-          where: { razorpayOrderId: orderId },
-          data: { status: 'FAILED' },
-        });
+        const payment = await prisma.payment.findUnique({ where: { razorpayOrderId: orderId } });
+        if (payment && payment.status === 'PENDING') {
+          await prisma.$transaction([
+            prisma.payment.update({ where: { id: payment.id }, data: { status: 'FAILED' } }),
+            prisma.order.update({ where: { id: payment.orderId }, data: { paymentStatus: 'FAILED' } }),
+          ]);
+        }
       }
       break;
     }
     case 'refund.processed': {
       const paymentId = payload?.refund?.entity?.payment_id;
       if (paymentId) {
-        await prisma.payment.updateMany({
-          where: { razorpayPaymentId: paymentId },
-          data: { status: 'REFUNDED', refundedAt: new Date() },
-        });
+        const payment = await prisma.payment.findUnique({ where: { razorpayPaymentId: paymentId } });
+        if (payment && payment.status !== 'REFUNDED') {
+          await prisma.$transaction([
+            prisma.payment.update({ where: { id: payment.id }, data: { status: 'REFUNDED', refundedAt: new Date() } }),
+            prisma.order.update({ where: { id: payment.orderId }, data: { paymentStatus: 'REFUNDED' } }),
+          ]);
+        }
       }
       break;
     }
   }
 
-  // Always respond 200 to Razorpay
+  // Always respond 200 to Razorpay (after verification) so it stops retrying.
   res.json({ status: 'ok' });
 }));
 

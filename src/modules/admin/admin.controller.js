@@ -51,6 +51,14 @@ const suspendStore = async (req, res) => {
   res.json({ store: updated, message: 'Store suspended' });
 };
 
+const reactivateStore = async (req, res) => {
+  const store = await prisma.store.findUnique({ where: { id: req.params.id } });
+  if (!store) throw new NotFoundError('Store not found');
+
+  const updated = await prisma.store.update({ where: { id: req.params.id }, data: { status: 'ACTIVE' } });
+  res.json({ store: updated, message: 'Store reactivated' });
+};
+
 const listUsers = async (req, res) => {
   const { status, search, page = 1, limit = 20 } = req.query;
   const pageNum = parseInt(page);
@@ -86,6 +94,17 @@ const suspendUser = async (req, res) => {
     select: { id: true, name: true, phone: true, status: true },
   });
   res.json({ user: updated, message: 'User suspended' });
+};
+
+const reactivateUser = async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.params.id } });
+  if (!user) throw new NotFoundError('User not found');
+
+  const updated = await prisma.user.update({
+    where: { id: req.params.id }, data: { status: 'ACTIVE' },
+    select: { id: true, name: true, phone: true, status: true },
+  });
+  res.json({ user: updated, message: 'User reactivated' });
 };
 
 const assignRole = async (req, res) => {
@@ -160,7 +179,7 @@ const getAuditLogs = async (req, res) => {
 };
 
 module.exports = {
-  getDashboard, listStores, approveStore, suspendStore,
-  listUsers, suspendUser, assignRole, listOrders, listRoles, listPermissions,
+  getDashboard, listStores, approveStore, suspendStore, reactivateStore,
+  listUsers, suspendUser, reactivateUser, assignRole, listOrders, listRoles, listPermissions,
   getAuditLogs,
 };

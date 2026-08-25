@@ -41,4 +41,9 @@ const logout = async (req, res) => {
   res.status(200).json({ message: 'Logged out successfully' });
 };
 
-module.exports = { register, login, sendOtp, verifyOtp, verifyWidgetToken, refreshToken, logout };
+const me = async (req, res) => {
+  const result = await authService.me(req.user.id);
+  res.status(200).json(result);
+};
+
+module.exports = { register, login, sendOtp, verifyOtp, verifyWidgetToken, refreshToken, logout, me };
