@@ -53,7 +53,7 @@ const lockAndDeduct = async (tx, productId, quantity) => {
            is_available   AS "isAvailable",
            status
     FROM products
-    WHERE id = ${productId}::uuid
+    WHERE id = ${productId}
     FOR UPDATE
   `;
 

@@ -74,4 +74,22 @@ router.post('/', authenticate, asyncHandler(subscriptionController.subscribe));
  */
 router.get('/current', authenticate, asyncHandler(subscriptionController.getCurrent));
 
+/**
+ * @swagger
+ * /api/v1/subscriptions/activate:
+ *   post:
+ *     summary: Start a paid recurring subscription (Razorpay) for the store's plan
+ *     tags: [Subscriptions]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Razorpay subscription created; complete the mandate via mandateUrl
+ */
+router.post('/activate', authenticate, asyncHandler(async (req, res) => {
+  const subscriptionService = require('./subscription.service');
+  const result = await subscriptionService.activatePaid(req.user.id, req.body || {});
+  res.json(result);
+}));
+
 module.exports = router;

@@ -47,7 +47,10 @@ router.post('/', authenticate, asyncHandler(async (req, res) => {
   const { orderId, amount, reason } = req.body;
   if (!orderId || !reason) throw new BadRequestError('orderId and reason required');
 
-  const order = await prisma.order.findUnique({ where: { id: orderId }, include: { payment: true } });
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: { payment: true, store: { select: { razorpayAccountId: true } }, deliveryEarning: true },
+  });
   if (!order) throw new NotFoundError('Order not found');
 
   // Only cancelled/delivered orders can be refunded
@@ -56,6 +59,10 @@ router.post('/', authenticate, asyncHandler(async (req, res) => {
   }
 
   const refundAmount = amount || parseFloat(order.total);
+  const isFullRefund = refundAmount >= parseFloat(order.total);
+  // Route-split order → the store received its goods share; reverse it on a full
+  // refund so the store doesn't keep money for a refunded order.
+  const isSplit = Boolean(order.store?.razorpayAccountId);
 
   // Check for existing pending refund
   const existingRefund = await prisma.refund.findFirst({
@@ -75,10 +82,16 @@ router.post('/', authenticate, asyncHandler(async (req, res) => {
     },
   });
 
-  // If online payment, trigger Razorpay refund
+  // If online payment, trigger Razorpay refund (reversing the store transfer for
+  // split orders on a full refund).
   if (order.payment?.razorpayPaymentId) {
     try {
-      const rzpRefund = await razorpayService.refund(order.payment.razorpayPaymentId, refundAmount);
+      const rzpRefund = await razorpayService.refund(
+        order.payment.razorpayPaymentId,
+        refundAmount,
+        { orderId },
+        { reverseAll: isSplit && isFullRefund }
+      );
       await prisma.refund.update({
         where: { id: refund.id },
         data: { status: 'processing', razorpayRefundId: rzpRefund.id },
@@ -91,6 +104,15 @@ router.post('/', authenticate, asyncHandler(async (req, res) => {
   } else {
     // COD — no money to refund, just mark completed
     await prisma.refund.update({ where: { id: refund.id }, data: { status: 'completed', processedAt: new Date() } });
+  }
+
+  // Void the delivery earning if the partner hasn't been paid yet — a refunded
+  // order should not generate a delivery payout.
+  if (order.deliveryEarning && order.deliveryEarning.status === 'pending') {
+    await prisma.deliveryEarning.update({
+      where: { id: order.deliveryEarning.id },
+      data: { status: 'voided', payoutStatus: 'voided' },
+    });
   }
 
   const updated = await prisma.refund.findUnique({ where: { id: refund.id } });

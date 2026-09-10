@@ -3,6 +3,7 @@ const router = express.Router();
 const { prisma } = require('../../shared/database');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate } = require('../../shared/middleware/auth');
+const notificationService = require('./notification.service');
 
 /**
  * @swagger
@@ -93,6 +94,25 @@ router.patch('/:id/read', authenticate, asyncHandler(async (req, res) => {
 router.patch('/read-all', authenticate, asyncHandler(async (req, res) => {
   await prisma.notification.updateMany({ where: { userId: req.user.id, isRead: false }, data: { isRead: true } });
   res.json({ message: 'All notifications marked as read' });
+}));
+
+/**
+ * @swagger
+ * /api/v1/notifications/device-token:
+ *   post:
+ *     summary: Register/refresh the caller's FCM device token for push
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Token stored
+ */
+router.post('/device-token', authenticate, asyncHandler(async (req, res) => {
+  const { fcmToken } = req.body || {};
+  if (!fcmToken) return res.status(400).json({ error: 'BAD_REQUEST', message: 'fcmToken is required' });
+  await notificationService.registerDeviceToken(req.user.id, fcmToken);
+  res.json({ message: 'Device token registered' });
 }));
 
 module.exports = router;

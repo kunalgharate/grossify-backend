@@ -173,6 +173,19 @@ router.post('/webhook', asyncHandler(async (req, res) => {
       }
       break;
     }
+    case 'subscription.activated':
+    case 'subscription.charged':
+    case 'subscription.halted':
+    case 'subscription.pending':
+    case 'subscription.cancelled':
+    case 'subscription.completed': {
+      const entity = payload?.subscription?.entity;
+      if (entity) {
+        const subscriptionService = require('../subscriptions/subscription.service');
+        await subscriptionService.handleWebhookEvent(event, entity).catch(() => {});
+      }
+      break;
+    }
   }
 
   // Always respond 200 to Razorpay (after verification) so it stops retrying.
@@ -214,6 +227,40 @@ router.get('/history', authenticate, asyncHandler(async (req, res) => {
   });
 
   res.json({ payments });
+}));
+
+/**
+ * @swagger
+ * /api/v1/payments/onboard-store:
+ *   post:
+ *     summary: Create a Razorpay Route linked account for the caller's store
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Linked account created; razorpayAccountId stored on the store
+ */
+router.post('/onboard-store', authenticate, asyncHandler(async (req, res) => {
+  const { storeId, email, phone, legalName, businessName } = req.body || {};
+  const store = await prisma.store.findUnique({ where: { id: storeId } });
+  if (!store) throw new NotFoundError('Store not found');
+  if (store.ownerId !== req.user.id) throw new ForbiddenError('Not your store');
+
+  if (store.razorpayAccountId) {
+    return res.json({ razorpayAccountId: store.razorpayAccountId, alreadyOnboarded: true });
+  }
+
+  const account = await razorpayService.createLinkedAccount({
+    storeId, email, phone, legalName, businessName: businessName || store.name,
+  });
+
+  await prisma.store.update({
+    where: { id: storeId },
+    data: { razorpayAccountId: account.id },
+  });
+
+  res.json({ razorpayAccountId: account.id, status: account.status, demo: account.demo || false });
 }));
 
 module.exports = router;

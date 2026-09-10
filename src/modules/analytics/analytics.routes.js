@@ -2,7 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { prisma } = require('../../shared/database');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
-const { authenticate } = require('../../shared/middleware/auth');
+const { authenticate, requireStaff } = require('../../shared/middleware/auth');
+const { ForbiddenError, NotFoundError } = require('../../shared/errors');
+const analyticsService = require('./analytics.service');
 
 /**
  * @swagger
@@ -15,31 +17,24 @@ const { authenticate } = require('../../shared/middleware/auth');
  * @swagger
  * /api/v1/analytics/platform:
  *   get:
- *     summary: Platform-wide analytics (admin/manager)
+ *     summary: Platform-wide analytics (admin/manager/support)
  *     tags: [Analytics]
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Platform metrics
+ *         description: Platform metrics (GMV, MRR, active counts, orders today)
  */
-router.get('/platform', authenticate, asyncHandler(async (req, res) => {
-  const [users, stores, orders, products, subscriptions] = await Promise.all([
-    prisma.user.count(),
-    prisma.store.count({ where: { status: 'ACTIVE' } }),
-    prisma.order.count(),
-    prisma.product.count({ where: { status: 'ACTIVE' } }),
-    prisma.subscription.count({ where: { status: { in: ['TRIAL', 'ACTIVE'] } } }),
-  ]);
-
-  res.json({ metrics: { users, stores, orders, products, activeSubscriptions: subscriptions } });
+router.get('/platform', authenticate, requireStaff, asyncHandler(async (req, res) => {
+  const metrics = await analyticsService.getPlatformMetrics();
+  res.json({ metrics });
 }));
 
 /**
  * @swagger
  * /api/v1/analytics/store/{storeId}:
  *   get:
- *     summary: Store-specific analytics (vendor)
+ *     summary: Store-specific analytics (owner only)
  *     tags: [Analytics]
  *     security:
  *       - bearerAuth: []
@@ -49,34 +44,25 @@ router.get('/platform', authenticate, asyncHandler(async (req, res) => {
  *         required: true
  *         schema:
  *           type: string
+ *       - in: query
+ *         name: period
+ *         schema:
+ *           type: string
+ *           enum: [daily, weekly, monthly, yearly]
  *     responses:
  *       200:
  *         description: Store metrics
  */
 router.get('/store/:storeId', authenticate, asyncHandler(async (req, res) => {
-  const storeId = req.params.storeId;
-
-  const [totalOrders, totalProducts, deliveredOrders] = await Promise.all([
-    prisma.order.count({ where: { storeId } }),
-    prisma.product.count({ where: { storeId, status: 'ACTIVE' } }),
-    prisma.order.count({ where: { storeId, status: 'DELIVERED' } }),
-  ]);
-
-  // Calculate revenue from delivered orders
-  const revenue = await prisma.order.aggregate({
-    where: { storeId, status: 'DELIVERED' },
-    _sum: { total: true },
+  const store = await prisma.store.findUnique({
+    where: { id: req.params.storeId },
+    select: { ownerId: true },
   });
+  if (!store) throw new NotFoundError('Store not found');
+  if (store.ownerId !== req.user.id) throw new ForbiddenError('Not your store');
 
-  res.json({
-    analytics: {
-      totalOrders,
-      deliveredOrders,
-      totalProducts,
-      revenue: revenue._sum.total || 0,
-      fulfillmentRate: totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0,
-    },
-  });
+  const analytics = await analyticsService.getStoreMetrics(req.params.storeId, req.query.period);
+  res.json({ analytics });
 }));
 
 module.exports = router;

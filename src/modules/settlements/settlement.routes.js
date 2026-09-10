@@ -4,6 +4,7 @@ const { prisma } = require('../../shared/database');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate } = require('../../shared/middleware/auth');
 const { NotFoundError } = require('../../shared/errors');
+const tcsService = require('./tcs.service');
 
 /**
  * @swagger
@@ -179,6 +180,30 @@ router.get('/transactions', authenticate, asyncHandler(async (req, res) => {
     },
     pagination: { page: pageNum, total },
   });
+}));
+
+/**
+ * @swagger
+ * /api/v1/settlements/tcs-report:
+ *   get:
+ *     summary: GSTR-8-style TCS report (platform TCS collected per store, admin)
+ *     tags: [Settlements]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: from
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: to
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200:
+ *         description: TCS report (per store + totals)
+ */
+router.get('/tcs-report', authenticate, require('../../shared/middleware/auth').requireStaff, asyncHandler(async (req, res) => {
+  const report = await tcsService.gstr8Report({ from: req.query.from, to: req.query.to });
+  res.json(report);
 }));
 
 module.exports = router;

@@ -36,6 +36,13 @@ const settlementRoutes = require('./modules/settlements/settlement.routes');
 const ticketRoutes = require('./modules/tickets/ticket.routes');
 const referralRoutes = require('./modules/referrals/referral.routes');
 const deliveryAgentRoutes = require('./modules/delivery-agent/delivery-agent.routes');
+const taxRoutes = require('./modules/tax/tax.routes');
+const posRoutes = require('./modules/pos/pos.routes');
+const printerRoutes = require('./modules/printers/printers.routes');
+const inventoryRoutes = require('./modules/inventory/inventory.routes');
+const purchasesRoutes = require('./modules/purchases/purchases.routes');
+const barcodeRoutes = require('./modules/products/barcode.routes');
+const restaurantRoutes = require('./modules/restaurant/restaurant.routes');
 
 const app = express();
 
@@ -115,6 +122,13 @@ app.use('/api/v1/settlements', settlementRoutes);
 app.use('/api/v1/tickets', ticketRoutes);
 app.use('/api/v1/referrals', referralRoutes);
 app.use('/api/v1/delivery-agent', deliveryAgentRoutes);
+app.use('/api/v1/tax', taxRoutes);
+app.use('/api/v1/pos', posRoutes);
+app.use('/api/v1/printers', printerRoutes);
+app.use('/api/v1/inventory', inventoryRoutes);
+app.use('/api/v1/purchases', purchasesRoutes);
+app.use('/api/v1/barcode', barcodeRoutes);
+app.use('/api/v1/restaurant', restaurantRoutes);
 
 // ─── Static uploads ───────────────────────────────────────
 app.use('/uploads', express.static('uploads'));

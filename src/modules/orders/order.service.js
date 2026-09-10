@@ -4,6 +4,8 @@ const { STAFF_DB_ROLE_NAMES } = require('../../shared/roles');
 const { validateTransition, canCancel, getRefundPercentage } = require('./order.workflow');
 const razorpayService = require('../payments/razorpay.service');
 const inventoryService = require('../products/inventory.service');
+const notificationService = require('../notifications/notification.service');
+const { computeDeliveryFee } = require('../delivery/delivery-fee');
 const config = require('../../shared/config');
 const {
   emitNewOrder,
@@ -132,7 +134,26 @@ const place = async (customerId, data) => {
     appliedOffer = offer;
   }
 
-  const total = Math.round((subtotal + convenienceFee - discount) * 100) / 100;
+  // ── Delivery fee (Grossify vs self) ──────────────────────────────────────
+  // The store's configured mode governs it; the request may choose GROSSIFY only
+  // if the store offers it (SELF or BOTH → self allowed; GROSSIFY or BOTH → ours).
+  const requestedMode = data.deliveryMode; // optional 'SELF' | 'GROSSIFY'
+  let deliveryMode = 'SELF';
+  if (store.deliveryMode === 'GROSSIFY') deliveryMode = 'GROSSIFY';
+  else if (store.deliveryMode === 'BOTH') deliveryMode = requestedMode === 'GROSSIFY' ? 'GROSSIFY' : 'SELF';
+  // (store.deliveryMode === 'SELF' → always SELF)
+
+  const deliverySplit = computeDeliveryFee({
+    mode: deliveryMode,
+    orderValue: subtotal,
+    minPerSide: store.minDeliveryFeePerSide != null ? parseFloat(store.minDeliveryFeePerSide) : config.delivery.minFeePerSide,
+    freeDeliveryAbove: store.freeDeliveryAbove != null ? parseFloat(store.freeDeliveryAbove) : null,
+    commissionPct: config.delivery.commissionPct,
+  });
+  // The customer pays only their side; the store's side is settled against the store.
+  const deliveryFee = deliverySplit.customerShare;
+
+  const total = Math.round((subtotal + convenienceFee + deliveryFee - discount) * 100) / 100;
 
   // Generate order number
   const date = new Date();
@@ -147,7 +168,20 @@ const place = async (customerId, data) => {
   if (paymentMethod === 'ONLINE') {
     if (razorpayService.isConfigured()) {
       try {
-        rzpOrder = await razorpayService.createOrder(total, orderNumber);
+        // Razorpay Route split: route the store's GOODS amount (subtotal − discount)
+        // straight to the store's linked account. Grossify takes 0% of goods
+        // (subscription model) and keeps convenience + delivery in the platform
+        // account. Only split when Route is enabled and the store is onboarded.
+        let transfers = null;
+        const storeGoodsAmount = Math.round((subtotal - discount) * 100) / 100;
+        if (config.razorpay.routeEnabled && store.razorpayAccountId) {
+          transfers = razorpayService.computeRouteTransfers({
+            storeAccountId: store.razorpayAccountId,
+            goodsAmount: storeGoodsAmount,
+            orderNumber, storeId,
+          });
+        }
+        rzpOrder = await razorpayService.createOrder(total, orderNumber, transfers);
       } catch (e) {
         console.error('[Razorpay] Order creation failed:', e.message);
         throw new BadRequestError('PAYMENT_INIT_FAILED: could not start online payment, please retry or use COD');
@@ -180,6 +214,8 @@ const place = async (customerId, data) => {
         status: 'PLACED',
         subtotal,
         convenienceFee,
+        deliveryFee,
+        orderType: 'DELIVERY',
         discount,
         total,
         paymentMethod,
@@ -189,6 +225,23 @@ const place = async (customerId, data) => {
       },
       include: { items: true },
     });
+
+    // Capture the delivery money split for settlement (GROSSIFY-fulfilled only).
+    if (deliveryMode === 'GROSSIFY') {
+      await tx.deliveryEarning.create({
+        data: {
+          orderId: newOrder.id,
+          storeId,
+          pool: deliverySplit.pool,
+          storeShare: deliverySplit.storeShare,
+          customerShare: deliverySplit.customerShare,
+          platformCommission: deliverySplit.platformCommission,
+          partnerPayout: deliverySplit.partnerPayout,
+          isFree: deliverySplit.isFree,
+          status: 'pending',
+        },
+      });
+    }
 
     let newPayment = null;
     if (paymentMethod === 'ONLINE' && rzpOrder) {
@@ -208,11 +261,14 @@ const place = async (customerId, data) => {
   // Emit real-time event to vendor
   emitNewOrder(storeId, order);
 
-  // Create notification for vendor (best-effort)
+  // Create notification for vendor (best-effort: in-app + push)
   const storeOwner = await prisma.store.findUnique({ where: { id: storeId }, select: { ownerId: true } });
   if (storeOwner) {
-    await prisma.notification.create({
-      data: { userId: storeOwner.ownerId, title: 'New Order!', body: `Order ${order.orderNumber} received.`, type: 'order', data: { orderId: order.id } },
+    await notificationService.notify(storeOwner.ownerId, {
+      title: 'New Order!',
+      body: `Order ${order.orderNumber} received.`,
+      type: 'order',
+      data: { orderId: order.id },
     }).catch(() => {});
   }
 
@@ -317,6 +373,15 @@ const updateStatus = async (orderId, newStatus, user) => {
 
   // Emit real-time status change to customer
   emitOrderStatus(order.customerId, orderId, newStatus);
+  // Best-effort in-app + push to the customer (skip for POS walk-ins with no customer)
+  if (order.customerId) {
+    notificationService.notify(order.customerId, {
+      title: 'Order Update',
+      body: `Your order is now ${newStatus.toLowerCase()}.`,
+      type: 'order_status',
+      data: { orderId, status: newStatus },
+    }).catch(() => {});
+  }
   // When ready for pickup, notify the delivery pool (auto-assignment lands in Slice 3)
   if (newStatus === 'READY') emitDeliveryAvailable(updated);
 

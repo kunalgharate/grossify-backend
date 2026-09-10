@@ -3,6 +3,12 @@ require('dotenv').config();
 const config = {
   port: parseInt(process.env.PORT, 10) || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
+  // Platform economics: no commission on merchant sales (subscription model);
+  // Grossify's only order-level cut is on GROSSIFY-fulfilled delivery.
+  delivery: {
+    commissionPct: parseFloat(process.env.DELIVERY_COMMISSION_PCT) || 5,
+    minFeePerSide: parseFloat(process.env.DELIVERY_MIN_FEE_PER_SIDE) || 20,
+  },
   database: {
     url: process.env.DATABASE_URL,
   },
@@ -18,6 +24,10 @@ const config = {
     keyId: process.env.RAZORPAY_KEY_ID,
     keySecret: process.env.RAZORPAY_KEY_SECRET,
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+    // RazorpayX (payouts) — the source account money is paid out FROM.
+    xAccountNumber: process.env.RAZORPAYX_ACCOUNT_NUMBER,
+    // Razorpay Route (linked accounts + transfers) toggle.
+    routeEnabled: process.env.RAZORPAY_ROUTE_ENABLED === 'true',
   },
   msg91: {
     authKey: process.env.MSG91_AUTH_KEY,
@@ -26,6 +36,8 @@ const config = {
   },
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID,
+    // Legacy FCM server key (simplest). If absent, push runs in demo mode.
+    serverKey: process.env.FCM_SERVER_KEY,
   },
   meilisearch: {
     host: process.env.MEILISEARCH_HOST || 'http://localhost:7700',

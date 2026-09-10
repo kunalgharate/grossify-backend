@@ -21,8 +21,6 @@ const { NotFoundError, BadRequestError } = require('../../shared/errors');
 const { validateTransition } = require('../orders/order.workflow');
 const { emitOrderStatus } = require('../../websocket/socket.handlers');
 
-const PER_DELIVERY_FEE = 25; // ₹ flat, simplified payout (matches earnings display)
-
 /**
  * Orders ready for pickup and not yet claimed by any agent. Includes the store
  * pickup point and the customer drop address so the app can route both legs.
@@ -73,6 +71,11 @@ const accept = async (orderId, user) => {
   if (claim.count === 0) {
     throw new BadRequestError('Order already assigned to another agent');
   }
+
+  // Attribute the delivery earning to this agent (GROSSIFY orders have one).
+  await prisma.deliveryEarning
+    .updateMany({ where: { orderId }, data: { agentId: user.id } })
+    .catch(() => {});
 
   await prisma.notification
     .create({
@@ -166,26 +169,37 @@ const listMyDeliveries = async (user, { status, page = 1 } = {}) => {
 };
 
 /**
- * Simple earnings summary for the calling agent: delivered counts × flat fee,
- * today and lifetime.
+ * Earnings summary for the calling agent, from the DeliveryEarning ledger:
+ * the real partner payout (pool − Grossify's commission) per GROSSIFY delivery.
+ * today = earnings for orders delivered today; total = all; pending = not yet settled.
  */
 const getEarnings = async (user) => {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const [todayDeliveries, totalDeliveries] = await Promise.all([
-    prisma.order.count({
-      where: { deliveryAgentId: user.id, status: 'DELIVERED', deliveredAt: { gte: todayStart } },
+  const [todayAgg, totalAgg, pendingAgg, totalCount] = await Promise.all([
+    prisma.deliveryEarning.aggregate({
+      where: { agentId: user.id, order: { deliveredAt: { gte: todayStart } } },
+      _sum: { partnerPayout: true }, _count: true,
+    }),
+    prisma.deliveryEarning.aggregate({
+      where: { agentId: user.id },
+      _sum: { partnerPayout: true }, _count: true,
+    }),
+    prisma.deliveryEarning.aggregate({
+      where: { agentId: user.id, status: 'pending' },
+      _sum: { partnerPayout: true },
     }),
     prisma.order.count({ where: { deliveryAgentId: user.id, status: 'DELIVERED' } }),
   ]);
 
+  const num = (d) => (d == null ? 0 : Number(d));
   return {
-    today: todayDeliveries * PER_DELIVERY_FEE,
-    todayDeliveries,
-    total: totalDeliveries * PER_DELIVERY_FEE,
-    totalDeliveries,
-    perDeliveryFee: PER_DELIVERY_FEE,
+    today: num(todayAgg._sum.partnerPayout),
+    todayDeliveries: todayAgg._count,
+    total: num(totalAgg._sum.partnerPayout),
+    totalDeliveries: totalCount,
+    pendingPayout: num(pendingAgg._sum.partnerPayout),
   };
 };
 
