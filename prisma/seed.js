@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcryptjs');
 const prisma = new PrismaClient();
 
 async function main() {
@@ -212,6 +213,203 @@ async function main() {
   await prisma.plan.deleteMany({});
   await prisma.plan.createMany({ data: plans });
   console.log(`✅ ${plans.length} subscription plans seeded`);
+
+  // ─── Test Accounts ─────────────────────────────────────────
+  // All test users share the same password: Test@1234
+  const TEST_PASSWORD = 'Test@1234';
+  const passwordHash = await bcrypt.hash(TEST_PASSWORD, 12);
+
+  // Fetch categories we need for stores/products
+  const groceryCat = await prisma.category.findUnique({ where: { slug: 'grocery' } });
+  const fruitsCat = await prisma.category.findUnique({ where: { slug: 'fruits-vegetables' } });
+  const electronicsCat = await prisma.category.findUnique({ where: { slug: 'electronics' } });
+
+  // Fetch the Admin role for assigning admin users
+  const adminRole = await prisma.role.findUnique({ where: { name: 'Admin' } });
+
+  // ── 3 Customers ──────────────────────────────────────────
+  const customers = [
+    { phone: '9900000001', name: 'Test Customer 1', email: 'customer1@test.grossify.in' },
+    { phone: '9900000002', name: 'Test Customer 2', email: 'customer2@test.grossify.in' },
+    { phone: '9900000003', name: 'Test Customer 3', email: 'customer3@test.grossify.in' },
+  ];
+
+  const createdCustomers = [];
+  for (const c of customers) {
+    const user = await prisma.user.upsert({
+      where: { phone: c.phone },
+      update: { name: c.name, email: c.email, passwordHash },
+      create: { phone: c.phone, name: c.name, email: c.email, passwordHash, status: 'ACTIVE' },
+    });
+    createdCustomers.push(user);
+
+    // Create a delivery address for each customer (Pune area)
+    await prisma.address.upsert({
+      where: { id: user.id }, // will miss → creates
+      update: {},
+      create: {
+        userId: user.id,
+        label: 'Home',
+        fullAddress: `${c.name} Home, MG Road, Pune`,
+        city: 'Pune',
+        pincode: '411001',
+        latitude: 18.5204 + Math.random() * 0.01,
+        longitude: 73.8567 + Math.random() * 0.01,
+        isDefault: true,
+      },
+    }).catch(() => {
+      // Address might already exist; ignore duplicate
+    });
+  }
+  console.log(`✅ ${customers.length} test customers seeded`);
+
+  // ── 3 Vendors (with stores + products) ───────────────────
+  const vendors = [
+    {
+      phone: '9900000011', name: 'Vendor Grocery', email: 'vendor.grocery@test.grossify.in',
+      store: {
+        name: 'Sharma Kirana Store', slug: 'sharma-kirana-pune',
+        categorySlug: 'grocery', category: groceryCat,
+        address: 'Shop 12, Market Yard, Pune', city: 'Pune', state: 'Maharashtra', pincode: '411037',
+        latitude: 18.5074, longitude: 73.8797,
+      },
+      products: [
+        { name: 'Toor Dal 1kg', slug: 'toor-dal-1kg', mrp: 180, sellingPrice: 160, stock: 50 },
+        { name: 'Basmati Rice 5kg', slug: 'basmati-rice-5kg', mrp: 450, sellingPrice: 420, stock: 30 },
+        { name: 'Refined Oil 1L', slug: 'refined-oil-1l', mrp: 160, sellingPrice: 145, stock: 40 },
+        { name: 'Sugar 1kg', slug: 'sugar-1kg', mrp: 48, sellingPrice: 45, stock: 100 },
+        { name: 'Wheat Flour 5kg', slug: 'wheat-flour-5kg', mrp: 250, sellingPrice: 230, stock: 25 },
+      ],
+    },
+    {
+      phone: '9900000012', name: 'Vendor Fruits', email: 'vendor.fruits@test.grossify.in',
+      store: {
+        name: 'Fresh Fruits Corner', slug: 'fresh-fruits-pune',
+        categorySlug: 'fruits-vegetables', category: fruitsCat,
+        address: '15, JM Road, Pune', city: 'Pune', state: 'Maharashtra', pincode: '411004',
+        latitude: 18.5196, longitude: 73.8410,
+      },
+      products: [
+        { name: 'Alphonso Mango 1kg', slug: 'alphonso-mango-1kg', mrp: 600, sellingPrice: 550, stock: 20 },
+        { name: 'Banana 1 dozen', slug: 'banana-dozen', mrp: 60, sellingPrice: 50, stock: 80 },
+        { name: 'Apple Shimla 1kg', slug: 'apple-shimla-1kg', mrp: 220, sellingPrice: 200, stock: 35 },
+        { name: 'Tomato 1kg', slug: 'tomato-1kg', mrp: 40, sellingPrice: 35, stock: 60 },
+        { name: 'Onion 1kg', slug: 'onion-1kg', mrp: 35, sellingPrice: 30, stock: 70 },
+      ],
+    },
+    {
+      phone: '9900000013', name: 'Vendor Electronics', email: 'vendor.electronics@test.grossify.in',
+      store: {
+        name: 'TechZone Electronics', slug: 'techzone-electronics-pune',
+        categorySlug: 'electronics', category: electronicsCat,
+        address: 'FC Road, Deccan, Pune', city: 'Pune', state: 'Maharashtra', pincode: '411005',
+        latitude: 18.5168, longitude: 73.8411,
+      },
+      products: [
+        { name: 'USB-C Cable 1m', slug: 'usbc-cable-1m', mrp: 399, sellingPrice: 299, stock: 100 },
+        { name: 'Wireless Earbuds', slug: 'wireless-earbuds', mrp: 1999, sellingPrice: 1499, stock: 25 },
+        { name: 'Phone Screen Protector', slug: 'screen-protector', mrp: 299, sellingPrice: 199, stock: 50 },
+        { name: '10000mAh Power Bank', slug: 'powerbank-10000', mrp: 1499, sellingPrice: 1199, stock: 15 },
+        { name: 'LED Desk Lamp', slug: 'led-desk-lamp', mrp: 899, sellingPrice: 699, stock: 20 },
+      ],
+    },
+  ];
+
+  for (const v of vendors) {
+    const user = await prisma.user.upsert({
+      where: { phone: v.phone },
+      update: { name: v.name, email: v.email, passwordHash },
+      create: { phone: v.phone, name: v.name, email: v.email, passwordHash, status: 'ACTIVE' },
+    });
+
+    const store = await prisma.store.upsert({
+      where: { slug: v.store.slug },
+      update: { name: v.store.name, isOpen: true, status: 'ACTIVE' },
+      create: {
+        ownerId: user.id,
+        name: v.store.name,
+        slug: v.store.slug,
+        categoryId: v.store.category.id,
+        address: v.store.address,
+        city: v.store.city,
+        state: v.store.state,
+        pincode: v.store.pincode,
+        latitude: v.store.latitude,
+        longitude: v.store.longitude,
+        isOpen: true,
+        status: 'ACTIVE',
+      },
+    });
+
+    for (const p of v.products) {
+      await prisma.product.upsert({
+        where: { storeId_slug: { storeId: store.id, slug: p.slug } },
+        update: { mrp: p.mrp, sellingPrice: p.sellingPrice, stockQuantity: p.stock },
+        create: {
+          storeId: store.id,
+          name: p.name,
+          slug: p.slug,
+          categoryId: v.store.category.id,
+          mrp: p.mrp,
+          sellingPrice: p.sellingPrice,
+          stockQuantity: p.stock,
+          isAvailable: true,
+          status: 'ACTIVE',
+        },
+      });
+    }
+  }
+  console.log(`✅ ${vendors.length} test vendors seeded (with stores + 5 products each)`);
+
+  // ── 3 Delivery Agents ────────────────────────────────────
+  const deliveryAgents = [
+    { phone: '9900000021', name: 'Delivery Agent Ravi', email: 'delivery.ravi@test.grossify.in', vehicle: 'bike', vehicleNumber: 'MH12AB1234' },
+    { phone: '9900000022', name: 'Delivery Agent Suresh', email: 'delivery.suresh@test.grossify.in', vehicle: 'scooter', vehicleNumber: 'MH12CD5678' },
+    { phone: '9900000023', name: 'Delivery Agent Priya', email: 'delivery.priya@test.grossify.in', vehicle: 'bicycle', vehicleNumber: null },
+  ];
+
+  for (const d of deliveryAgents) {
+    const user = await prisma.user.upsert({
+      where: { phone: d.phone },
+      update: { name: d.name, email: d.email, passwordHash },
+      create: { phone: d.phone, name: d.name, email: d.email, passwordHash, status: 'ACTIVE' },
+    });
+
+    await prisma.deliveryAgent.upsert({
+      where: { userId: user.id },
+      update: { vehicleType: d.vehicle, status: 'active' },
+      create: {
+        userId: user.id,
+        vehicleType: d.vehicle,
+        vehicleNumber: d.vehicleNumber,
+        serviceRadius: 5000,
+        isOnline: false,
+        status: 'active',
+      },
+    });
+  }
+  console.log(`✅ ${deliveryAgents.length} test delivery agents seeded`);
+
+  // ── 1 Admin user ─────────────────────────────────────────
+  const adminUser = await prisma.user.upsert({
+    where: { phone: '9900000099' },
+    update: { name: 'Test Admin', passwordHash },
+    create: { phone: '9900000099', name: 'Test Admin', email: 'admin@test.grossify.in', passwordHash, status: 'ACTIVE' },
+  });
+  if (adminRole) {
+    await prisma.userRole.upsert({
+      where: { userId_roleId: { userId: adminUser.id, roleId: adminRole.id } },
+      update: {},
+      create: { userId: adminUser.id, roleId: adminRole.id },
+    });
+  }
+  console.log('✅ 1 test admin user seeded');
+
+  console.log('\n📋 Test Credentials (password for all: Test@1234):');
+  console.log('   Customers:  9900000001, 9900000002, 9900000003');
+  console.log('   Vendors:    9900000011 (grocery), 9900000012 (fruits), 9900000013 (electronics)');
+  console.log('   Delivery:   9900000021 (Ravi), 9900000022 (Suresh), 9900000023 (Priya)');
+  console.log('   Admin:      9900000099');
 
   console.log('\n🎉 Seed complete!');
 }
