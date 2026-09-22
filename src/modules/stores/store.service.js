@@ -161,7 +161,7 @@ const update = async (storeId, userId, data) => {
 
   // Fields allowed to update
   const allowedFields = ['name', 'description', 'address', 'city', 'state', 'pincode',
-    'latitude', 'longitude', 'isOpen', 'businessHours', 'phone', 'gstNumber', 'fssaiNumber'];
+    'latitude', 'longitude', 'isOpen', 'businessHours', 'phone', 'gstNumber', 'fssaiNumber', 'status'];
 
   const updateData = {};
   for (const field of allowedFields) {
