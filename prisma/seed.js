@@ -223,6 +223,10 @@ async function main() {
   const groceryCat = await prisma.category.findUnique({ where: { slug: 'grocery' } });
   const fruitsCat = await prisma.category.findUnique({ where: { slug: 'fruits-vegetables' } });
   const electronicsCat = await prisma.category.findUnique({ where: { slug: 'electronics' } });
+  const clothingCat = await prisma.category.findUnique({ where: { slug: 'clothing' } });
+  const hardwareCat = await prisma.category.findUnique({ where: { slug: 'hardware' } });
+  const giftsCat = await prisma.category.findUnique({ where: { slug: 'gifts' } });
+  const sportsCat = await prisma.category.findUnique({ where: { slug: 'sports' } });
 
   // Fetch the Admin role for assigning admin users
   const adminRole = await prisma.role.findUnique({ where: { name: 'Admin' } });
@@ -311,6 +315,63 @@ async function main() {
         { name: 'Phone Screen Protector', slug: 'screen-protector', mrp: 299, sellingPrice: 199, stock: 50 },
         { name: '10000mAh Power Bank', slug: 'powerbank-10000', mrp: 1499, sellingPrice: 1199, stock: 15 },
         { name: 'LED Desk Lamp', slug: 'led-desk-lamp', mrp: 899, sellingPrice: 699, stock: 20 },
+      ],
+    },
+    // ── City-level stores (10–25 km from Karve Nagar, same Pune) ──
+    {
+      phone: '9900000014', name: 'Vendor Fashion', email: 'vendor.fashion@test.grossify.in',
+      store: {
+        name: 'Style Studio Clothing', slug: 'style-studio-pune',
+        categorySlug: 'clothing', category: clothingCat,
+        address: 'MG Road, Camp, Pune', city: 'Pune', state: 'Maharashtra', pincode: '411001',
+        latitude: 18.5204, longitude: 73.8567,
+      },
+      products: [
+        { name: 'Cotton T-Shirt', slug: 'cotton-tshirt', mrp: 599, sellingPrice: 449, stock: 80 },
+        { name: 'Denim Jeans', slug: 'denim-jeans', mrp: 1299, sellingPrice: 999, stock: 40 },
+        { name: 'Kurta Set', slug: 'kurta-set', mrp: 899, sellingPrice: 699, stock: 30 },
+      ],
+    },
+    {
+      phone: '9900000015', name: 'Vendor Hardware', email: 'vendor.hardware@test.grossify.in',
+      store: {
+        name: 'BuildRight Hardware', slug: 'buildright-hardware-pune',
+        categorySlug: 'hardware', category: hardwareCat,
+        address: 'Hadapsar, Pune', city: 'Pune', state: 'Maharashtra', pincode: '411028',
+        latitude: 18.5089, longitude: 73.9259,
+      },
+      products: [
+        { name: 'Power Drill Set', slug: 'power-drill-set', mrp: 3499, sellingPrice: 2999, stock: 10 },
+        { name: 'Paint Roller Kit', slug: 'paint-roller-kit', mrp: 349, sellingPrice: 279, stock: 25 },
+        { name: 'Screwdriver Set 12pc', slug: 'screwdriver-set-12', mrp: 599, sellingPrice: 449, stock: 35 },
+      ],
+    },
+    {
+      phone: '9900000016', name: 'Vendor Gifts', email: 'vendor.gifts@test.grossify.in',
+      store: {
+        name: 'GiftBox Pune', slug: 'giftbox-pune',
+        categorySlug: 'gifts', category: giftsCat,
+        address: 'Koregaon Park, Pune', city: 'Pune', state: 'Maharashtra', pincode: '411001',
+        latitude: 18.5362, longitude: 73.8930,
+      },
+      products: [
+        { name: 'Photo Frame Set', slug: 'photo-frame-set', mrp: 799, sellingPrice: 599, stock: 20 },
+        { name: 'Scented Candle Pack', slug: 'scented-candle-pack', mrp: 499, sellingPrice: 399, stock: 30 },
+        { name: 'Customized Mug', slug: 'customized-mug', mrp: 349, sellingPrice: 249, stock: 50 },
+      ],
+    },
+    {
+      phone: '9900000017', name: 'Vendor Sports', email: 'vendor.sports@test.grossify.in',
+      store: {
+        name: 'SportsFit Pune', slug: 'sportsfit-pune',
+        categorySlug: 'sports', category: sportsCat,
+        address: 'Baner, Pune', city: 'Pune', state: 'Maharashtra', pincode: '411045',
+        latitude: 18.5590, longitude: 73.7868,
+      },
+      products: [
+        { name: 'Yoga Mat', slug: 'yoga-mat', mrp: 899, sellingPrice: 699, stock: 40 },
+        { name: 'Resistance Bands Set', slug: 'resistance-bands', mrp: 599, sellingPrice: 449, stock: 30 },
+        { name: 'Cricket Ball Cork', slug: 'cricket-ball-cork', mrp: 249, sellingPrice: 199, stock: 60 },
       ],
     },
   ];
