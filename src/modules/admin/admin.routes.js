@@ -391,4 +391,30 @@ router.get('/permissions', requireRoles('admin'), asyncHandler(adminController.l
  */
 router.get('/audit-logs', requireRoles('admin'), asyncHandler(adminController.getAuditLogs));
 
+/**
+ * @swagger
+ * /api/v1/admin/fraud/customer/{customerId}:
+ *   get:
+ *     summary: Risk-score a customer for fraud / RTO abuse
+ *     tags: [Admin]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: customerId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Risk assessment (score, level, flags, recommendation) }
+ *       403: { description: Requires staff }
+ */
+router.get(
+  '/fraud/customer/:customerId',
+  requireStaff,
+  asyncHandler(async (req, res) => {
+    const fraudService = require('./fraud.service');
+    const assessment = await fraudService.assessCustomer(req.params.customerId);
+    res.json({ assessment });
+  }),
+);
+
 module.exports = router;

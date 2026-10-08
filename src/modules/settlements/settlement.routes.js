@@ -206,4 +206,40 @@ router.get('/tcs-report', authenticate, require('../../shared/middleware/auth').
   res.json(report);
 }));
 
+/**
+ * @swagger
+ * /api/v1/settlements/reconcile/{storeId}:
+ *   get:
+ *     summary: Reconcile a store's captured payments vs settled amounts (staff)
+ *     tags: [Settlements]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: storeId
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: from
+ *         schema: { type: string, format: date }
+ *       - in: query
+ *         name: to
+ *         schema: { type: string, format: date }
+ *     responses:
+ *       200: { description: Reconciliation report (expected vs actual, variance, payout check) }
+ */
+router.get(
+  '/reconcile/:storeId',
+  authenticate,
+  require('../../shared/middleware/auth').requireStaff,
+  asyncHandler(async (req, res) => {
+    const reconciliation = require('./reconciliation.service');
+    const report = await reconciliation.reconcileStore({
+      storeId: req.params.storeId,
+      from: req.query.from,
+      to: req.query.to,
+    });
+    res.json({ report });
+  }),
+);
+
 module.exports = router;

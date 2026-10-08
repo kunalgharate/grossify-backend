@@ -13,6 +13,7 @@ beforeAll(async () => {
   // Clean test data
   await prisma.orderItem.deleteMany({});
   await prisma.order.deleteMany({});
+  await prisma.productVariant.deleteMany({});
   await prisma.product.deleteMany({});
   await prisma.subscription.deleteMany({});
   await prisma.store.deleteMany({});
@@ -30,6 +31,7 @@ afterAll(async () => {
   // Cleanup
   await prisma.orderItem.deleteMany({});
   await prisma.order.deleteMany({});
+  await prisma.productVariant.deleteMany({});
   await prisma.product.deleteMany({});
   await prisma.subscription.deleteMany({});
   await prisma.store.deleteMany({});

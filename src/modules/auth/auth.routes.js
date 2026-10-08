@@ -1,8 +1,19 @@
 const express = require('express');
 const router = express.Router();
+const { rateLimit } = require('express-rate-limit');
 const authController = require('./auth.controller');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate } = require('../../shared/middleware/auth');
+
+// Stricter limiter for OTP endpoints: these trigger SMS (cost) and are a common
+// abuse/enumeration target, so they get a tighter cap than the global /api limiter.
+const otpLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 5, // 5 OTP attempts per IP per window
+  message: { error: 'TOO_MANY_REQUESTS', message: 'Too many OTP requests. Try again in a few minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 /**
  * @swagger
@@ -114,7 +125,7 @@ router.post('/login', asyncHandler(authController.login));
  *       400:
  *         description: Phone number is required
  */
-router.post('/send-otp', asyncHandler(authController.sendOtp));
+router.post('/send-otp', otpLimiter, asyncHandler(authController.sendOtp));
 
 /**
  * @swagger
@@ -170,7 +181,7 @@ router.post('/send-otp', asyncHandler(authController.sendOtp));
  *       401:
  *         description: Invalid or expired OTP
  */
-router.post('/verify-otp', asyncHandler(authController.verifyOtp));
+router.post('/verify-otp', otpLimiter, asyncHandler(authController.verifyOtp));
 
 /**
  * @swagger
@@ -228,7 +239,7 @@ router.post('/verify-otp', asyncHandler(authController.verifyOtp));
  *       401:
  *         description: Invalid or expired widget token
  */
-router.post('/verify-widget-token', asyncHandler(authController.verifyWidgetToken));
+router.post('/verify-widget-token', otpLimiter, asyncHandler(authController.verifyWidgetToken));
 
 /**
  * @swagger

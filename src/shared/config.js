@@ -43,6 +43,28 @@ const config = {
     host: process.env.MEILISEARCH_HOST || 'http://localhost:7700',
     apiKey: process.env.MEILISEARCH_API_KEY,
   },
+  // E-invoice / e-way bill via a GSP/IRP provider (e.g. Masters India, ClearTax,
+  // GSTZen). Only active when a base URL + key are configured.
+  einvoice: {
+    baseUrl: process.env.EINVOICE_BASE_URL,
+    apiKey: process.env.EINVOICE_API_KEY,
+    gstin: process.env.EINVOICE_GSTIN,
+    // Turnover threshold (₹) above which e-invoice is mandatory.
+    thresholdInr: Number(process.env.EINVOICE_THRESHOLD_INR || 50000000),
+  },
+  // Shipping/courier aggregator (Shiprocket / Delhivery / DTDC / India Post).
+  courier: {
+    provider: process.env.COURIER_PROVIDER || 'shiprocket',
+    baseUrl: process.env.COURIER_BASE_URL,
+    apiKey: process.env.COURIER_API_KEY,
+    email: process.env.COURIER_EMAIL,
+    password: process.env.COURIER_PASSWORD,
+    webhookSecret: process.env.COURIER_WEBHOOK_SECRET,
+  },
+  // Google Maps Platform (routing/ETA for delivery assignment).
+  maps: {
+    apiKey: process.env.GOOGLE_MAPS_API_KEY,
+  },
   app: {
     name: process.env.APP_NAME || 'Grossify',
     url: process.env.APP_URL || 'http://localhost:3000',

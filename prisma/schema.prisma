@@ -95,6 +95,10 @@ model User {
   wallet           Wallet?
   deliveryProfile  DeliveryAgent?
   deliveryEarnings DeliveryEarning[]        @relation("AgentDeliveryEarnings")
+  wishlist         WishlistItem[]
+  policyAcceptances PolicyAcceptance[]
+  consents          ConsentRecord[]
+  dataRightsRequests DataRightsRequest[]
 
   @@map("users")
 }
@@ -303,6 +307,8 @@ model Product {
   sellingPrice   Decimal       @map("selling_price") @db.Decimal(10, 2)
   stockQuantity  Int           @default(0) @map("stock_quantity")
   isAvailable    Boolean       @default(true) @map("is_available")
+  returnable     Boolean       @default(false) @map("returnable")
+  returnWindowDays Int         @default(0) @map("return_window_days")
   attributes     Json?
   images         String[]
   barcode        String?
@@ -333,6 +339,7 @@ model Product {
   poItems        POItem[]
   grnItems       GRNItem[]
   modifierGroups ModifierGroup[]        @relation("ProductModifiers")
+  wishlistItems  WishlistItem[]
 
   @@unique([storeId, slug])
   @@index([storeId, status])
@@ -426,6 +433,7 @@ model Order {
   tenders         PaymentTender[]
   kots            KOT[]
   deliveryEarning DeliveryEarning?
+  returnRequests  ReturnRequest[]
 
   @@index([customerId, placedAt(sort: Desc)])
   @@index([storeId, status])
@@ -579,6 +587,113 @@ model Review {
   @@map("reviews")
 }
 
+model WishlistItem {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  productId String   @map("product_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([userId])
+  @@map("wishlist_items")
+}
+
+model ReturnRequest {
+  id                 String       @id @default(uuid())
+  orderId            String       @map("order_id")
+  customerId         String       @map("customer_id")
+  outcome            String // RETURN | REPLACE | EXCHANGE
+  reason             String
+  reasonNote         String?      @map("reason_note")
+  photos             String[]
+  status             String       @default("REQUESTED") // REQUESTED|APPROVED|PICKUP_SCHEDULED|PICKED_UP|QC|REFUNDED|REPLACED|REJECTED|CANCELLED
+  refundMethod       String?      @map("refund_method") // SOURCE | WALLET
+  replacementOrderId String?      @map("replacement_order_id")
+  qcResult           String?      @map("qc_result") // PASS | FAIL
+  qcNote             String?      @map("qc_note")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  order Order        @relation(fields: [orderId], references: [id])
+  items ReturnItem[]
+
+  @@index([orderId])
+  @@index([customerId, status])
+  @@map("return_requests")
+}
+
+model ReturnItem {
+  id              String  @id @default(uuid())
+  returnRequestId String  @map("return_request_id")
+  orderItemId     String  @map("order_item_id")
+  quantity        Int
+  targetVariantId String? @map("target_variant_id")
+
+  returnRequest ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+
+  @@index([returnRequestId])
+  @@map("return_items")
+}
+
+model PolicyVersion {
+  id             String   @id @default(uuid())
+  policyType     String   @map("policy_type") // TOS|PRIVACY|RETURN_REFUND|SHIPPING|CANCELLATION|SELLER|RIDER
+  version        String
+  effectiveAt    DateTime @map("effective_at")
+  materialChange Boolean  @default(false) @map("material_change")
+  isCurrent      Boolean  @default(true) @map("is_current")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([policyType, isCurrent])
+  @@map("policy_versions")
+}
+
+model PolicyAcceptance {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  policyType String   @map("policy_type")
+  version    String
+  acceptedAt DateTime @default(now()) @map("accepted_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, policyType])
+  @@map("policy_acceptances")
+}
+
+model ConsentRecord {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  purpose     String // MARKETING_SMS | MARKETING_EMAIL | ...
+  granted     Boolean   @default(false)
+  grantedAt   DateTime? @map("granted_at")
+  withdrawnAt DateTime? @map("withdrawn_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, purpose])
+  @@index([userId, purpose])
+  @@map("consent_records")
+}
+
+model DataRightsRequest {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  type        String // ACCESS | CORRECTION | ERASURE
+  status      String    @default("PENDING") // PENDING | PROCESSING | COMPLETED | REJECTED
+  resultUrl   String?   @map("result_url")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@map("data_rights_requests")
+}
+
 enum ReviewStatus {
   PUBLISHED
   FLAGGED
@@ -710,6 +825,11 @@ model Ticket {
   priority     String    @default("P3") // P0, P1, P2, P3
   status       String    @default("open") // open, in_progress, resolved, closed, escalated
   assignedTo   String?   @map("assigned_to")
+  isGrievance    Boolean   @default(false) @map("is_grievance")
+  ackDueAt       DateTime? @map("ack_due_at")
+  resolveDueAt   DateTime? @map("resolve_due_at")
+  acknowledgedAt DateTime? @map("acknowledged_at")
+  slaStatus      String?   @map("sla_status") // ON_TIME | AT_RISK | BREACHED
   resolvedAt   DateTime? @map("resolved_at")
   closedAt     DateTime? @map("closed_at")
   createdAt    DateTime  @default(now()) @map("created_at")

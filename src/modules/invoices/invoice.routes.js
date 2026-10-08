@@ -130,4 +130,68 @@ router.get('/store', authenticate, asyncHandler(async (req, res) => {
   res.json({ invoices, pagination: { page: pageNum, limit: limitNum, total } });
 }));
 
+/**
+ * @swagger
+ * /api/v1/invoices/{orderId}/e-invoice:
+ *   post:
+ *     summary: Generate an e-invoice (IRN + signed QR) for an order's invoice
+ *     tags: [Invoices]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: orderId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: IRN result (GENERATED or NOT_CONFIGURED) }
+ */
+router.post('/:orderId/e-invoice', authenticate, asyncHandler(async (req, res) => {
+  const einvoice = require('./einvoice.service');
+  const invoice = await prisma.invoice.findFirst({
+    where: { orderId: req.params.orderId },
+    include: {
+      order: {
+        include: {
+          store: true,
+          items: { include: { product: { select: { name: true, hsn: true } } } },
+        },
+      },
+    },
+  });
+  if (!invoice) throw new NotFoundError('Invoice not found');
+
+  const store = invoice.order.store;
+  const result = await einvoice.generateIrn({
+    invoice: {
+      invoiceNo: invoice.invoiceNumber || invoice.id,
+      date: (invoice.createdAt || new Date()).toISOString().slice(0, 10),
+      taxableValue: Number(invoice.taxableValue || invoice.subtotal || 0),
+      cgst: Number(invoice.cgst || 0),
+      sgst: Number(invoice.sgst || 0),
+      igst: Number(invoice.igst || 0),
+      total: Number(invoice.total || 0),
+    },
+    seller: {
+      gstin: store.gstNumber,
+      legalName: store.name,
+      address: store.address,
+      city: store.city,
+      pincode: store.pincode,
+      stateCode: store.stateCode,
+    },
+    buyer: { name: 'Customer', stateCode: store.stateCode },
+    items: invoice.order.items.map((it) => ({
+      name: it.product?.name || 'Item',
+      hsn: it.product?.hsn || '',
+      qty: it.quantity,
+      unitPrice: Number(it.unitPrice),
+      taxable: Number(it.totalPrice),
+      gstRate: 0,
+      total: Number(it.totalPrice),
+    })),
+  });
+
+  res.json({ eInvoice: result });
+}));
+
 module.exports = router;

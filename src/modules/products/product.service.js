@@ -82,6 +82,32 @@ const getById = async (productId) => {
 };
 
 /**
+ * Get single product by store slug + product slug (SEO-friendly lookup).
+ * Resolves the store by slug, then the product by slug within that store.
+ */
+const getByStoreAndSlug = async (storeSlug, productSlug) => {
+  const store = await prisma.store.findUnique({ where: { slug: storeSlug }, select: { id: true } });
+  if (!store) {
+    throw new NotFoundError('Product not found');
+  }
+
+  const product = await prisma.product.findFirst({
+    where: { storeId: store.id, slug: productSlug, status: { not: 'DELETED' } },
+    include: {
+      variants: true,
+      store: { select: { id: true, name: true, slug: true, isOpen: true } },
+      category: { select: { id: true, name: true, slug: true } },
+    },
+  });
+
+  if (!product) {
+    throw new NotFoundError('Product not found');
+  }
+
+  return product;
+};
+
+/**
  * Create product (vendor)
  */
 const create = async (userId, data) => {
@@ -190,4 +216,4 @@ const remove = async (productId, userId) => {
   return true;
 };
 
-module.exports = { list, getById, create, update, remove };
+module.exports = { list, getById, getByStoreAndSlug, create, update, remove };

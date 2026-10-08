@@ -51,10 +51,58 @@ const sendSms = async (phone, message) => {
   return msg91Service.sendSms(phone, message);
 };
 
-/** Email via Brevo — stubbed until credentials are configured. */
+/**
+ * Email via Brevo (transactional API). Best-effort: when BREVO_API_KEY is not
+ * configured it falls back to a logged stub (same pattern as MSG91/FCM demo
+ * mode), so dev/CI never fails on missing email creds. Uses global fetch
+ * (Node 18+) — no new dependency.
+ */
 const sendEmail = async (email, subject, template, data = {}) => {
-  console.log(`[email STUB] -> ${email} | ${subject} (${template})`);
-  return { success: true, stubbed: true };
+  const apiKey = process.env.BREVO_API_KEY;
+  const sender = {
+    name: process.env.BREVO_SENDER_NAME || 'Grossify',
+    email: process.env.BREVO_SENDER_EMAIL || 'no-reply@grossify.in',
+  };
+
+  if (!apiKey) {
+    console.log(`[email STUB] -> ${email} | ${subject} (${template})`);
+    return { success: true, stubbed: true };
+  }
+
+  // Minimal HTML body from template name + data. A richer template registry can
+  // replace this; the contract (email, subject, template, data) stays the same.
+  const htmlContent =
+    typeof data.html === 'string'
+      ? data.html
+      : `<p>${subject}</p><pre>${JSON.stringify(data, null, 2)}</pre>`;
+
+  try {
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        sender,
+        to: [{ email }],
+        subject,
+        htmlContent,
+        tags: [template],
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error(`[email] Brevo send failed (${res.status}): ${body.slice(0, 200)}`);
+      return { success: false, status: res.status };
+    }
+    return { success: true };
+  } catch (err) {
+    console.error(`[email] Brevo send error: ${err.message}`);
+    return { success: false, error: err.message };
+  }
 };
 
 /**

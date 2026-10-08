@@ -54,6 +54,31 @@ router.get('/', asyncHandler(productController.list));
 
 /**
  * @swagger
+ * /api/v1/products/by-slug/{storeSlug}/{productSlug}:
+ *   get:
+ *     summary: Get product details by store slug + product slug (SEO-friendly)
+ *     tags: [Products]
+ *     parameters:
+ *       - in: path
+ *         name: storeSlug
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: productSlug
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Product details with variants
+ *       404:
+ *         description: Product not found
+ */
+router.get('/by-slug/:storeSlug/:productSlug', asyncHandler(productController.getByStoreAndSlug));
+
+/**
+ * @swagger
  * /api/v1/products/{id}:
  *   get:
  *     summary: Get product details by ID

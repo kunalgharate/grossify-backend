@@ -11,6 +11,11 @@ const getById = async (req, res) => {
   res.status(200).json({ product });
 };
 
+const getByStoreAndSlug = async (req, res) => {
+  const product = await productService.getByStoreAndSlug(req.params.storeSlug, req.params.productSlug);
+  res.status(200).json({ product });
+};
+
 const create = async (req, res) => {
   const product = await productService.create(req.user.id, req.body);
   res.status(201).json({ product, message: 'Product created' });
@@ -26,4 +31,4 @@ const remove = async (req, res) => {
   res.status(200).json({ message: 'Product deleted' });
 };
 
-module.exports = { list, getById, create, update, remove };
+module.exports = { list, getById, getByStoreAndSlug, create, update, remove };
