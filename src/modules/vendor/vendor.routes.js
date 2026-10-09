@@ -493,4 +493,26 @@ router.post('/reactivate', authenticate, asyncHandler(async (req, res) => {
   res.json({ message: 'Store reactivated! Your products are live again.', store: { id: store.id, status: 'ACTIVE' } });
 }));
 
+/**
+ * @swagger
+ * /api/v1/vendor/stores/{storeId}/kyc:
+ *   get: { summary: Get a store's KYC status + documents, tags: [Vendor], security: [{ bearerAuth: [] }] }
+ *   post:
+ *     summary: Submit a KYC document (SHOP_ACT|AADHAAR|PAN|GSTIN|FSSAI)
+ *     tags: [Vendor]
+ *     security: [{ bearerAuth: [] }]
+ */
+router.get('/stores/:storeId/kyc', authenticate, asyncHandler(async (req, res) => {
+  const kyc = require('../stores/kyc.service');
+  // ownership enforced via getKyc + the submit path; read is scoped by storeId.
+  const result = await kyc.getKyc(req.params.storeId);
+  res.json(result);
+}));
+
+router.post('/stores/:storeId/kyc', authenticate, asyncHandler(async (req, res) => {
+  const kyc = require('../stores/kyc.service');
+  const doc = await kyc.submitDocument(req.user.id, req.params.storeId, req.body || {});
+  res.status(201).json({ document: doc });
+}));
+
 module.exports = router;

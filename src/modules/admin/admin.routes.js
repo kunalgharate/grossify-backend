@@ -417,4 +417,54 @@ router.get(
   }),
 );
 
+/**
+ * @swagger
+ * /api/v1/admin/kyc/queue:
+ *   get:
+ *     summary: Stores awaiting KYC verification
+ *     tags: [Admin]
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: KYC review queue } }
+ */
+router.get('/kyc/queue', requireStaff, asyncHandler(async (req, res) => {
+  const kyc = require('../stores/kyc.service');
+  const queue = await kyc.kycQueue();
+  res.json({ queue });
+}));
+
+/**
+ * @swagger
+ * /api/v1/admin/stores/{id}/kyc:
+ *   get: { summary: A store's KYC status + documents, tags: [Admin], security: [{ bearerAuth: [] }] }
+ *   post:
+ *     summary: Verify or reject a store's KYC (admin/manager)
+ *     tags: [Admin]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               approve: { type: boolean }
+ *               reason: { type: string }
+ *               aadhaarVerified: { type: boolean }
+ *     responses: { 200: { description: Updated store KYC } }
+ */
+router.get('/stores/:id/kyc', requireStaff, asyncHandler(async (req, res) => {
+  const kyc = require('../stores/kyc.service');
+  res.json(await kyc.getKyc(req.params.id));
+}));
+
+router.post(
+  '/stores/:id/kyc',
+  requireRoles('admin', 'manager'),
+  auditLog('stores.kyc.review'),
+  asyncHandler(async (req, res) => {
+    const kyc = require('../stores/kyc.service');
+    const store = await kyc.reviewKyc(req.params.id, req.body || {});
+    res.json({ store, message: req.body.approve ? 'KYC verified' : 'KYC rejected' });
+  }),
+);
+
 module.exports = router;

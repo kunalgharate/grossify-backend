@@ -224,6 +224,11 @@ model Store {
   phone                 String?
   gstNumber             String?        @map("gst_number")
   fssaiNumber           String?        @map("fssai_number")
+  aadhaarNumber         String?        @map("aadhaar_number")
+  aadhaarVerified       Boolean        @default(false) @map("aadhaar_verified")
+  kycStatus             String         @default("PENDING") @map("kyc_status") // PENDING | SUBMITTED | VERIFIED | REJECTED
+  kycRejectionReason    String?        @map("kyc_rejection_reason")
+  kycVerifiedAt         DateTime?      @map("kyc_verified_at")
   vendorType            VendorType     @default(GENERAL_RETAIL) @map("vendor_type")
   gstScheme             GstScheme      @default(UNREGISTERED) @map("gst_scheme")
   stateCode             Int?           @map("state_code")
@@ -241,6 +246,7 @@ model Store {
   category         Category               @relation(fields: [categoryId], references: [id])
   products         Product[]
   orders           Order[]
+  kycDocuments     KycDocument[]
   reviews          Review[]               @relation("StoreReviews")
   offers           Offer[]
   subscription     Subscription?
@@ -263,6 +269,35 @@ model Store {
   @@index([categoryId, city, status])
   @@index([latitude, longitude])
   @@map("stores")
+}
+
+model KycDocument {
+  id        String   @id @default(uuid())
+  storeId   String   @map("store_id")
+  type      String   // SHOP_ACT | AADHAAR | PAN | GSTIN | FSSAI | OTHER
+  url       String
+  status    String   @default("SUBMITTED") // SUBMITTED | VERIFIED | REJECTED
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, type])
+  @@map("kyc_documents")
+}
+
+model Setting {
+  id        String   @id @default(uuid())
+  scope     String   // PLATFORM | STORE
+  storeId   String?  @map("store_id")
+  key       String
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([scope, storeId, key])
+  @@index([scope, storeId])
+  @@map("settings")
 }
 
 enum StoreStatus {
