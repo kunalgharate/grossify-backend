@@ -12,6 +12,7 @@ const ADMIN_PHONE = '+919000000001';
 const SELLER_PHONE = '+919000000002';
 const STAFF_PHONE = '+919000000003';
 const CUSTOMER_PHONE = '+919000000004';
+const B2B_SELLER_PHONE = '+919000000005';
 
 async function ensureUser(phone, name) {
   let user = await prisma.user.findUnique({ where: { phone } });
@@ -204,11 +205,77 @@ async function main() {
     console.log(`order ${CUST_ORDER_NUM} already exists`);
   }
 
+  // ── B2B demo store (a farm selling to hotels/businesses) ──────────────────
+  // Demonstrates the B2B segment: hidden from radius discovery, visible only
+  // to users in B2B mode (no radius). Idempotent on ownerId.
+  const b2bSeller = await ensureUser(B2B_SELLER_PHONE, 'Demo Farm (B2B)');
+  let b2bStore = await prisma.store.findFirst({ where: { ownerId: b2bSeller.id } });
+  if (!b2bStore) {
+    const b2bCategory =
+      (await prisma.category.findFirst({ where: { slug: 'vegetables' } })) ||
+      (await prisma.category.findFirst({ where: { slug: 'grocery' } })) ||
+      (await prisma.category.findFirst());
+    b2bStore = await prisma.store.create({
+      data: {
+        ownerId: b2bSeller.id,
+        name: 'GreenFarm Wholesale',
+        slug: `greenfarm-wholesale-${Date.now().toString(36)}`,
+        categoryId: b2bCategory.id,
+        description: 'Farm-fresh produce in bulk for hotels, restaurants & caterers (B2B)',
+        address: 'Gangapur Road Farms',
+        city: 'Nashik',
+        state: 'Maharashtra',
+        pincode: '422013',
+        latitude: 20.0110,
+        longitude: 73.7500,
+        phone: B2B_SELLER_PHONE,
+        status: 'ACTIVE',
+        kycStatus: 'VERIFIED',
+        aadhaarVerified: true,
+        storeType: 'B2B',
+      },
+    });
+    console.log(`created B2B store "GreenFarm Wholesale" -> ${b2bStore.id}`);
+  } else {
+    b2bStore = await prisma.store.update({
+      where: { id: b2bStore.id },
+      data: { status: 'ACTIVE', kycStatus: 'VERIFIED', storeType: 'B2B' },
+    });
+    console.log(`B2B store exists "${b2bStore.name}" -> ${b2bStore.id} (ensured ACTIVE/VERIFIED/B2B)`);
+  }
+  await prisma.storeStaff.upsert({
+    where: { storeId_userId: { storeId: b2bStore.id, userId: b2bSeller.id } },
+    create: { storeId: b2bStore.id, userId: b2bSeller.id, role: 'OWNER', status: 'ACTIVE' },
+    update: { role: 'OWNER', status: 'ACTIVE' },
+  });
+  const b2bProducts = [
+    { name: 'Tomatoes (10kg crate)', mrp: 400, sellingPrice: 350, stock: 200, hsn: '0702' },
+    { name: 'Onions (25kg bag)', mrp: 750, sellingPrice: 680, stock: 150, hsn: '0703' },
+    { name: 'Potatoes (25kg bag)', mrp: 600, sellingPrice: 540, stock: 180, hsn: '0701' },
+    { name: 'Green Chillies (5kg)', mrp: 300, sellingPrice: 260, stock: 90, hsn: '0709' },
+  ];
+  let b2bCreated = 0;
+  for (const dp of b2bProducts) {
+    const existing = await prisma.product.findFirst({ where: { storeId: b2bStore.id, name: dp.name } });
+    if (existing) continue;
+    const slug = `${dp.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${b2bStore.id.slice(0, 6)}`;
+    await prisma.product.create({
+      data: {
+        storeId: b2bStore.id, name: dp.name, slug, categoryId: b2bStore.categoryId,
+        mrp: dp.mrp, sellingPrice: dp.sellingPrice, stockQuantity: dp.stock,
+        unit: 'crate', hsn: dp.hsn, isAvailable: true, reorderLevel: 20,
+      },
+    });
+    b2bCreated++;
+  }
+  console.log(`✓ B2B store ensured + ${b2bCreated} B2B products created`);
+
   console.log('\n=== DEMO LOGINS (OTP = 123456) ===');
   console.log(`Admin  portal: phone ${ADMIN_PHONE}`);
-  console.log(`Seller portal: phone ${SELLER_PHONE}  (owner of "Demo Mart")`);
-  console.log(`Store staff  : phone ${STAFF_PHONE}  (CASHIER at "Demo Mart" — sees store orders)`);
+  console.log(`Seller portal: phone ${SELLER_PHONE}  (owner of "Demo Mart" — B2C)`);
+  console.log(`Store staff  : phone ${STAFF_PHONE}  (CASHIER at "Demo Mart")`);
   console.log(`Customer     : phone ${CUSTOMER_PHONE} (placed online order ${CUST_ORDER_NUM})`);
+  console.log(`B2B seller   : phone ${B2B_SELLER_PHONE} (owner of "GreenFarm Wholesale" — B2B)`);
 }
 
 main()
