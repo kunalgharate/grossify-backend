@@ -11,6 +11,7 @@ const prisma = new PrismaClient();
 const ADMIN_PHONE = '+919000000001';
 const SELLER_PHONE = '+919000000002';
 const STAFF_PHONE = '+919000000003';
+const CUSTOMER_PHONE = '+919000000004';
 
 async function ensureUser(phone, name) {
   let user = await prisma.user.findUnique({ where: { phone } });
@@ -147,10 +148,67 @@ async function main() {
   }
   console.log(`✓ ${created} demo orders created (idempotent)`);
 
+  // ── Demo customer + address + a customer-linked ONLINE order ──────────────
+  // Gives the seller app real data for the Customers screen and the order
+  // detail's customer relation + delivery address.
+  const customer = await ensureUser(CUSTOMER_PHONE, 'Demo Customer');
+  let address = await prisma.address.findFirst({ where: { userId: customer.id } });
+  if (!address) {
+    address = await prisma.address.create({
+      data: {
+        userId: customer.id,
+        label: 'Home',
+        fullAddress: '12 College Road, Near City Center',
+        landmark: 'Opp. Big Bazaar',
+        city: 'Nashik',
+        pincode: '422005',
+        latitude: 20.0059,
+        longitude: 73.7910,
+        isDefault: true,
+      },
+    });
+    console.log(`created address for customer -> ${address.id}`);
+  }
+
+  const CUST_ORDER_NUM = 'GRS-DEMO-0004';
+  const existingCustOrder = await prisma.order.findUnique({ where: { orderNumber: CUST_ORDER_NUM } });
+  if (!existingCustOrder) {
+    // Toor Dal x2 + Sunflower Oil x1
+    const custItems = [[0, 2], [2, 1]].map(([idx, qty]) => {
+      const p = products[idx];
+      const unit = Number(p.sellingPrice);
+      return { productId: p.id, productName: p.name, quantity: qty, unitPrice: unit, totalPrice: unit * qty };
+    });
+    const custSubtotal = custItems.reduce((s, i) => s + i.totalPrice, 0);
+    const deliveryFee = 25;
+    await prisma.order.create({
+      data: {
+        orderNumber: CUST_ORDER_NUM,
+        storeId: store.id,
+        customerId: customer.id,
+        addressId: address.id,
+        customerName: customer.name,
+        customerPhone: customer.phone,
+        status: 'PLACED',
+        channel: 'ONLINE',
+        paymentMethod: 'COD',
+        paymentStatus: 'PENDING',
+        subtotal: custSubtotal,
+        deliveryFee,
+        total: custSubtotal + deliveryFee,
+        items: { create: custItems },
+      },
+    });
+    console.log(`✓ customer-linked online order ${CUST_ORDER_NUM} created`);
+  } else {
+    console.log(`order ${CUST_ORDER_NUM} already exists`);
+  }
+
   console.log('\n=== DEMO LOGINS (OTP = 123456) ===');
   console.log(`Admin  portal: phone ${ADMIN_PHONE}`);
   console.log(`Seller portal: phone ${SELLER_PHONE}  (owner of "Demo Mart")`);
   console.log(`Store staff  : phone ${STAFF_PHONE}  (CASHIER at "Demo Mart" — sees store orders)`);
+  console.log(`Customer     : phone ${CUSTOMER_PHONE} (placed online order ${CUST_ORDER_NUM})`);
 }
 
 main()
