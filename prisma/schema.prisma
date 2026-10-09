@@ -17,6 +17,15 @@ enum VendorType {
   RESTAURANT
 }
 
+/// Sales segment of a store.
+/// B2C = local direct-to-consumer (shown in radius-based discovery).
+/// B2B = business-to-business (e.g. a farm selling to hotels); hidden from
+/// radius discovery, visible only to users who enable B2B mode, with no radius.
+enum StoreType {
+  B2C
+  B2B
+}
+
 enum GstScheme {
   REGULAR
   COMPOSITION
@@ -231,6 +240,7 @@ model Store {
   kycRejectionReason    String?        @map("kyc_rejection_reason")
   kycVerifiedAt         DateTime?      @map("kyc_verified_at")
   vendorType            VendorType     @default(GENERAL_RETAIL) @map("vendor_type")
+  storeType             StoreType      @default(B2C) @map("store_type")
   gstScheme             GstScheme      @default(UNREGISTERED) @map("gst_scheme")
   stateCode             Int?           @map("state_code")
   stockValuation        StockValuation @default(WEIGHTED_AVG) @map("stock_valuation")

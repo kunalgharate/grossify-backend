@@ -17,7 +17,9 @@ const findNearby = async ({ lat, lng, radius, category, page = 1, limit = 20 }) 
   const skip = (pageNum - 1) * limitNum;
 
   // Build where clause
-  const where = { status: 'ACTIVE' };
+  // Radius discovery is for LOCAL (B2C) stores only. B2B stores are hidden here
+  // and only surfaced via the dedicated B2B browse path (no radius).
+  const where = { status: 'ACTIVE', storeType: 'B2C' };
 
   // If category slug provided, resolve to ID
   if (category) {
@@ -52,6 +54,7 @@ const findNearby = async ({ lat, lng, radius, category, page = 1, limit = 20 }) 
         longitude: true,
         address: true,
         city: true,
+        storeType: true,
         category: { select: { name: true, slug: true } },
       },
     }),
@@ -69,6 +72,46 @@ const findNearby = async ({ lat, lng, radius, category, page = 1, limit = 20 }) 
     stores: storesWithDistance,
     pagination: { page: pageNum, limit: limitNum, total, hasNext: skip + limitNum < total },
     meta: { radius_used: radiusM, location: { lat: latNum, lng: lngNum } },
+  };
+};
+
+/**
+ * Browse B2B stores — NO radius. B2B is a business-to-business segment (e.g. a
+ * farm selling to hotels): any B2B buyer can discover any active B2B store
+ * regardless of distance. Optional category/search/city filters; paginated.
+ */
+const listB2B = async ({ category, search, city, page = 1, limit = 20 } = {}) => {
+  const pageNum = parseInt(page) || 1;
+  const limitNum = Math.min(parseInt(limit) || 20, 50);
+  const skip = (pageNum - 1) * limitNum;
+
+  const where = { status: 'ACTIVE', storeType: 'B2B' };
+  if (category) {
+    const cat = await prisma.category.findUnique({ where: { slug: category } });
+    if (cat) where.categoryId = cat.id;
+  }
+  if (city) where.city = { equals: city, mode: 'insensitive' };
+  if (search) where.name = { contains: search, mode: 'insensitive' };
+
+  const [stores, total] = await Promise.all([
+    prisma.store.findMany({
+      where,
+      skip,
+      take: limitNum,
+      orderBy: { totalOrders: 'desc' },
+      select: {
+        id: true, name: true, slug: true, logoUrl: true, rating: true,
+        totalReviews: true, isOpen: true, address: true, city: true, state: true,
+        storeType: true, category: { select: { name: true, slug: true } },
+      },
+    }),
+    prisma.store.count({ where }),
+  ]);
+
+  return {
+    stores,
+    pagination: { page: pageNum, limit: limitNum, total, hasNext: skip + limitNum < total },
+    meta: { segment: 'B2B' },
   };
 };
 
@@ -104,11 +147,13 @@ const getById = async (idOrSlug) => {
  * Create a new store (vendor registration)
  */
 const create = async (ownerId, data) => {
-  const { name, categoryId, description, address, city, state, pincode, latitude, longitude, phone, gstNumber, fssaiNumber } = data;
+  const { name, categoryId, description, address, city, state, pincode, latitude, longitude, phone, gstNumber, fssaiNumber, storeType } = data;
 
   if (!name || !categoryId || !address || !city || !state || !pincode || !latitude || !longitude) {
     throw new BadRequestError('Required fields: name, categoryId, address, city, state, pincode, latitude, longitude');
   }
+
+  const normalizedType = storeType === 'B2B' ? 'B2B' : 'B2C';
 
   // Verify category exists
   const category = await prisma.category.findUnique({ where: { id: categoryId } });
@@ -132,6 +177,7 @@ const create = async (ownerId, data) => {
       pincode,
       latitude,
       longitude,
+      storeType: normalizedType,
       phone: phone || null,
       gstNumber: gstNumber || null,
       fssaiNumber: fssaiNumber || null,
@@ -161,13 +207,18 @@ const update = async (storeId, userId, data) => {
 
   // Fields allowed to update
   const allowedFields = ['name', 'description', 'address', 'city', 'state', 'pincode',
-    'latitude', 'longitude', 'isOpen', 'businessHours', 'phone', 'gstNumber', 'fssaiNumber', 'status'];
+    'latitude', 'longitude', 'isOpen', 'businessHours', 'phone', 'gstNumber', 'fssaiNumber', 'status',
+    'storeType', 'logoUrl', 'bannerUrl'];
 
   const updateData = {};
   for (const field of allowedFields) {
     if (data[field] !== undefined) {
       updateData[field] = data[field];
     }
+  }
+  // Validate storeType if provided.
+  if (updateData.storeType !== undefined && !['B2C', 'B2B'].includes(updateData.storeType)) {
+    throw new BadRequestError('storeType must be B2C or B2B');
   }
 
   const updated = await prisma.store.update({
@@ -200,4 +251,4 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-module.exports = { findNearby, getById, create, update };
+module.exports = { findNearby, listB2B, getById, create, update };

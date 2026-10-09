@@ -21,4 +21,10 @@ const update = async (req, res) => {
   res.status(200).json({ store, message: 'Store updated' });
 };
 
-module.exports = { getNearby, getById, create, update };
+const listB2B = async (req, res) => {
+  const { category, search, city, page, limit } = req.query;
+  const result = await storeService.listB2B({ category, search, city, page, limit });
+  res.status(200).json(result);
+};
+
+module.exports = { getNearby, getById, create, update, listB2B };

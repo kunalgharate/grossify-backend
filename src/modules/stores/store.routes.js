@@ -75,6 +75,8 @@ router.get('/nearby', asyncHandler(storeController.getNearby));
  *       404:
  *         description: Store not found
  */
+router.get('/b2b', asyncHandler(storeController.listB2B));
+
 router.get('/:id', asyncHandler(storeController.getById));
 
 /**
