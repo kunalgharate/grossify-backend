@@ -10,6 +10,7 @@ const prisma = new PrismaClient();
 
 const ADMIN_PHONE = '+919000000001';
 const SELLER_PHONE = '+919000000002';
+const STAFF_PHONE = '+919000000003';
 
 async function ensureUser(phone, name) {
   let user = await prisma.user.findUnique({ where: { phone } });
@@ -79,9 +80,77 @@ async function main() {
   }
   console.log(`✓ seller ${SELLER_PHONE} owns store ${store.id}`);
 
+  // ── Owner as OWNER staff + a demo STAFF member ───────────────────────────
+  await prisma.storeStaff.upsert({
+    where: { storeId_userId: { storeId: store.id, userId: seller.id } },
+    create: { storeId: store.id, userId: seller.id, role: 'OWNER', status: 'ACTIVE' },
+    update: { role: 'OWNER', status: 'ACTIVE' },
+  });
+  const staffUser = await ensureUser(STAFF_PHONE, 'Demo Staff');
+  await prisma.storeStaff.upsert({
+    where: { storeId_userId: { storeId: store.id, userId: staffUser.id } },
+    create: { storeId: store.id, userId: staffUser.id, role: 'CASHIER', status: 'ACTIVE', invitedBy: seller.id },
+    update: { role: 'CASHIER', status: 'ACTIVE' },
+  });
+  console.log(`✓ staff ${STAFF_PHONE} is CASHIER at ${store.name}`);
+
+  // ── Demo products ────────────────────────────────────────────────────────
+  const catId = store.categoryId;
+  const demoProducts = [
+    { name: 'Toor Dal 1kg', mrp: 180, sellingPrice: 160, stock: 50, hsn: '0713' },
+    { name: 'Basmati Rice 5kg', mrp: 650, sellingPrice: 599, stock: 30, hsn: '1006' },
+    { name: 'Sunflower Oil 1L', mrp: 150, sellingPrice: 139, stock: 40, hsn: '1512' },
+    { name: 'Sugar 1kg', mrp: 55, sellingPrice: 50, stock: 100, hsn: '1701' },
+  ];
+  const products = [];
+  for (const dp of demoProducts) {
+    const slug = `${dp.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${store.id.slice(0, 6)}`;
+    const existing = await prisma.product.findFirst({ where: { storeId: store.id, name: dp.name } });
+    const p = existing
+      ? existing
+      : await prisma.product.create({
+          data: {
+            storeId: store.id, name: dp.name, slug, categoryId: catId,
+            mrp: dp.mrp, sellingPrice: dp.sellingPrice, stockQuantity: dp.stock,
+            unit: 'piece', hsn: dp.hsn, isAvailable: true, reorderLevel: 10,
+          },
+        });
+    products.push(p);
+  }
+  console.log(`✓ ${products.length} demo products ensured`);
+
+  // ── Demo orders (idempotent on orderNumber) ──────────────────────────────
+  const demoOrders = [
+    { num: 'GRS-DEMO-0001', status: 'DELIVERED', channel: 'ONLINE', items: [[0, 2], [3, 1]] },
+    { num: 'GRS-DEMO-0002', status: 'PLACED', channel: 'ONLINE', items: [[1, 1]] },
+    { num: 'GRS-DEMO-0003', status: 'DELIVERED', channel: 'POS', items: [[2, 3], [3, 2]] },
+  ];
+  let created = 0;
+  for (const o of demoOrders) {
+    const existing = await prisma.order.findUnique({ where: { orderNumber: o.num } });
+    if (existing) continue;
+    const items = o.items.map(([idx, qty]) => {
+      const p = products[idx];
+      const unit = Number(p.sellingPrice);
+      return { productId: p.id, productName: p.name, quantity: qty, unitPrice: unit, totalPrice: unit * qty };
+    });
+    const subtotal = items.reduce((s, i) => s + i.totalPrice, 0);
+    await prisma.order.create({
+      data: {
+        orderNumber: o.num, storeId: store.id, customerId: null,
+        status: o.status, channel: o.channel, paymentMethod: 'COD',
+        subtotal, total: subtotal,
+        items: { create: items },
+      },
+    });
+    created++;
+  }
+  console.log(`✓ ${created} demo orders created (idempotent)`);
+
   console.log('\n=== DEMO LOGINS (OTP = 123456) ===');
   console.log(`Admin  portal: phone ${ADMIN_PHONE}`);
-  console.log(`Seller portal: phone ${SELLER_PHONE}`);
+  console.log(`Seller portal: phone ${SELLER_PHONE}  (owner of "Demo Mart")`);
+  console.log(`Store staff  : phone ${STAFF_PHONE}  (CASHIER at "Demo Mart" — sees store orders)`);
 }
 
 main()

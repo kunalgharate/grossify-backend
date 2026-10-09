@@ -96,6 +96,7 @@ model User {
   deliveryProfile  DeliveryAgent?
   deliveryEarnings DeliveryEarning[]        @relation("AgentDeliveryEarnings")
   wishlist         WishlistItem[]
+  storeStaff        StoreStaff[]
   policyAcceptances PolicyAcceptance[]
   consents          ConsentRecord[]
   dataRightsRequests DataRightsRequest[]
@@ -247,6 +248,7 @@ model Store {
   products         Product[]
   orders           Order[]
   kycDocuments     KycDocument[]
+  staff            StoreStaff[]
   reviews          Review[]               @relation("StoreReviews")
   offers           Offer[]
   subscription     Subscription?
@@ -284,6 +286,24 @@ model KycDocument {
 
   @@index([storeId, type])
   @@map("kyc_documents")
+}
+
+model StoreStaff {
+  id        String   @id @default(uuid())
+  storeId   String   @map("store_id")
+  userId    String   @map("user_id")
+  role      String   @default("STAFF") // OWNER | MANAGER | STAFF | CASHIER
+  status    String   @default("ACTIVE") // ACTIVE | INVITED | REMOVED
+  invitedBy String?  @map("invited_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, userId])
+  @@index([userId])
+  @@index([storeId, status])
+  @@map("store_staff")
 }
 
 model Setting {

@@ -61,7 +61,7 @@ router.get('/my-store', authenticate, asyncHandler(async (req, res) => {
  *         description: Store orders
  */
 router.get('/orders', authenticate, asyncHandler(async (req, res) => {
-  const store = await prisma.store.findFirst({ where: { ownerId: req.user.id } });
+  const store = await require('./staff.service').resolveActiveStore(req.user.id);
   if (!store) throw new NotFoundError('Store not found');
 
   const { status, page = 1, limit = 20 } = req.query;
@@ -210,7 +210,7 @@ router.patch('/orders/:id/ready', authenticate, asyncHandler(async (req, res) =>
  *         description: Customer list
  */
 router.get('/customers', authenticate, asyncHandler(async (req, res) => {
-  const store = await prisma.store.findFirst({ where: { ownerId: req.user.id } });
+  const store = await require('./staff.service').resolveActiveStore(req.user.id);
   if (!store) throw new NotFoundError('Store not found');
 
   const customers = await prisma.user.findMany({
@@ -513,6 +513,47 @@ router.post('/stores/:storeId/kyc', authenticate, asyncHandler(async (req, res) 
   const kyc = require('../stores/kyc.service');
   const doc = await kyc.submitDocument(req.user.id, req.params.storeId, req.body || {});
   res.status(201).json({ document: doc });
+}));
+
+/**
+ * @swagger
+ * /api/v1/vendor/stores/{storeId}/staff:
+ *   get: { summary: List store staff (owner/manager), tags: [Vendor], security: [{ bearerAuth: [] }] }
+ *   post:
+ *     summary: Invite/add a staff member by phone (owner/manager)
+ *     tags: [Vendor]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               phone: { type: string }
+ *               role: { type: string, enum: [MANAGER, STAFF, CASHIER] }
+ *               name: { type: string }
+ */
+router.get('/stores/:storeId/staff', authenticate, asyncHandler(async (req, res) => {
+  const staff = require('./staff.service');
+  const members = await staff.list(req.user.id, req.params.storeId);
+  res.json({ staff: members });
+}));
+
+router.post('/stores/:storeId/staff', authenticate, asyncHandler(async (req, res) => {
+  const staff = require('./staff.service');
+  const member = await staff.invite(req.user.id, req.params.storeId, req.body || {});
+  res.status(201).json({ staff: member });
+}));
+
+/**
+ * @swagger
+ * /api/v1/vendor/stores/{storeId}/staff/{userId}:
+ *   delete: { summary: Remove a staff member (owner/manager), tags: [Vendor], security: [{ bearerAuth: [] }] }
+ */
+router.delete('/stores/:storeId/staff/:userId', authenticate, asyncHandler(async (req, res) => {
+  const staff = require('./staff.service');
+  const result = await staff.remove(req.user.id, req.params.storeId, req.params.userId);
+  res.json(result);
 }));
 
 module.exports = router;
