@@ -41,7 +41,7 @@ function normalizePhone(phone) {
  * gives the vendor app its store context without an extra round-trip.
  */
 const resolveUserContext = async (userId) => {
-  const [store, deliveryProfile, userRoles] = await Promise.all([
+  const [store, deliveryProfile, userRoles, staffMembership] = await Promise.all([
     prisma.store.findFirst({
       where: { ownerId: userId },
       select: { id: true, name: true, slug: true, status: true, logoUrl: true },
@@ -49,6 +49,13 @@ const resolveUserContext = async (userId) => {
     }),
     prisma.deliveryAgent.findUnique({ where: { userId }, select: { id: true, status: true } }),
     prisma.userRole.findMany({ where: { userId }, include: { role: { select: { name: true } } } }),
+    // Active store-staff membership (non-owner) also grants vendor access, so a
+    // company's staff/cashiers can open the seller portal scoped to their store.
+    prisma.storeStaff.findFirst({
+      where: { userId, status: 'ACTIVE' },
+      select: { role: true, store: { select: { id: true, name: true, slug: true, status: true, logoUrl: true } } },
+      orderBy: { createdAt: 'asc' },
+    }),
   ]);
 
   const roles = new Set(['customer']);
@@ -59,11 +66,15 @@ const resolveUserContext = async (userId) => {
   const staffLogical = mapDbRolesToLogical(userRoles.map((ur) => ur.role && ur.role.name));
   for (const role of staffLogical) roles.add(role);
   if (store) roles.add('vendor');
+  if (staffMembership) roles.add('vendor'); // active store-staff → seller portal access
   if (deliveryProfile) roles.add('delivery');
 
   const primaryRole = pickPrimaryRole(roles);
 
-  return { roles: Array.from(roles), primaryRole, store: store || null };
+  // Owner's store takes precedence; otherwise fall back to the staffed store so
+  // the client has a store context either way.
+  const effectiveStore = store || (staffMembership ? staffMembership.store : null);
+  return { roles: Array.from(roles), primaryRole, store: effectiveStore, staffRole: staffMembership ? staffMembership.role : null };
 };
 
 /**
