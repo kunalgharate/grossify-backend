@@ -5,6 +5,7 @@ const { prisma } = require('../../shared/database');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate } = require('../../shared/middleware/auth');
 const { BadRequestError, NotFoundError, ForbiddenError } = require('../../shared/errors');
+const { parsePagination, buildPagination } = require('../../shared/utils/pagination');
 
 /**
  * @swagger
@@ -213,12 +214,28 @@ router.get('/customers', authenticate, asyncHandler(async (req, res) => {
   const store = await require('./staff.service').resolveActiveStore(req.user.id);
   if (!store) throw new NotFoundError('Store not found');
 
-  const customers = await prisma.user.findMany({
-    where: { orders: { some: { storeId: store.id } } },
-    select: { id: true, name: true, phone: true, email: true, createdAt: true },
-  });
+  const where = { orders: { some: { storeId: store.id } } };
+  const select = { id: true, name: true, phone: true, email: true, createdAt: true };
+  const orderBy = { createdAt: 'desc' };
 
-  res.json({ customers });
+  const { paged, page, limit, skip, take } = parsePagination(req.query);
+
+  if (!paged) {
+    // Backward-compatible default: return the full list (plus meta) for callers
+    // that do not opt into paging by sending page/limit.
+    const customers = await prisma.user.findMany({ where, select, orderBy });
+    return res.json({
+      customers,
+      pagination: buildPagination(1, customers.length || 1, customers.length),
+    });
+  }
+
+  const [customers, total] = await Promise.all([
+    prisma.user.findMany({ where, select, orderBy, skip, take }),
+    prisma.user.count({ where }),
+  ]);
+
+  res.json({ customers, pagination: buildPagination(page, limit, total) });
 }));
 
 /**

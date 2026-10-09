@@ -4,6 +4,7 @@ const { prisma } = require('../../shared/database');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate } = require('../../shared/middleware/auth');
 const { BadRequestError, NotFoundError, ForbiddenError } = require('../../shared/errors');
+const { parsePagination, buildPagination } = require('../../shared/utils/pagination');
 
 /**
  * @swagger
@@ -41,13 +42,27 @@ router.get('/', asyncHandler(async (req, res) => {
     where.validUntil = { gte: new Date() };
   }
 
-  const offers = await prisma.offer.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    include: { store: { select: { id: true, name: true } } },
-  });
+  const orderBy = { createdAt: 'desc' };
+  const include = { store: { select: { id: true, name: true } } };
 
-  res.json({ offers });
+  const { paged, page, limit, skip, take } = parsePagination(req.query);
+
+  if (!paged) {
+    // Backward-compatible default: full list (plus meta) when the client does
+    // not opt into paging via page/limit.
+    const offers = await prisma.offer.findMany({ where, orderBy, include });
+    return res.json({
+      offers,
+      pagination: buildPagination(1, offers.length || 1, offers.length),
+    });
+  }
+
+  const [offers, total] = await Promise.all([
+    prisma.offer.findMany({ where, orderBy, include, skip, take }),
+    prisma.offer.count({ where }),
+  ]);
+
+  res.json({ offers, pagination: buildPagination(page, limit, total) });
 }));
 
 /**
