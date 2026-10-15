@@ -36,6 +36,21 @@ describe('staff.service', () => {
     expect(await staff.roleOnStore('u1', 's1')).toBeNull();
   });
 
+  it('allows active store staff to perform order operations but excludes cashiers', async () => {
+    prisma.store.findUnique.mockResolvedValue({ ownerId: 'other' });
+    prisma.storeStaff.findUnique.mockResolvedValue({ role: 'STAFF', status: 'ACTIVE' });
+    await expect(staff.requireStoreRole('u1', 's1', staff.ORDER_OPERATIONS_ROLES)).resolves.toBe('STAFF');
+
+    prisma.storeStaff.findUnique.mockResolvedValue({ role: 'CASHIER', status: 'ACTIVE' });
+    await expect(staff.requireStoreRole('u1', 's1', staff.ORDER_OPERATIONS_ROLES)).rejects.toThrow(/permission/);
+  });
+
+  it('does not allow removed staff to perform order operations', async () => {
+    prisma.store.findUnique.mockResolvedValue({ ownerId: 'other' });
+    prisma.storeStaff.findUnique.mockResolvedValue({ role: 'STAFF', status: 'REMOVED' });
+    await expect(staff.requireStoreRole('u1', 's1', staff.ORDER_OPERATIONS_ROLES)).rejects.toThrow(/permission/);
+  });
+
   it('invite forbids a non-manager', async () => {
     prisma.store.findUnique.mockResolvedValue({ ownerId: 'other' });
     prisma.storeStaff.findUnique.mockResolvedValue(null); // no role

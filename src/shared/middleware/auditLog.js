@@ -16,7 +16,7 @@ const auditLog = (action) => {
           userId: req.user?.id,
           action,
           resourceType: action.split('.')[0],
-          resourceId: req.params.id || body?.store?.id || body?.order?.id || body?.product?.id || null,
+          resourceId: req.params.id || body?.store?.id || body?.order?.id || body?.product?.id || body?.category?.id || null,
           details: {
             method: req.method,
             path: req.path,

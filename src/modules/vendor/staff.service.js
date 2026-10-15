@@ -13,6 +13,7 @@ const { BadRequestError, NotFoundError, ForbiddenError } = require('../../shared
 
 const ROLES = ['OWNER', 'MANAGER', 'STAFF', 'CASHIER'];
 const MANAGE_ROLES = ['OWNER', 'MANAGER'];
+const ORDER_OPERATIONS_ROLES = ['OWNER', 'MANAGER', 'STAFF'];
 
 /** All store ids a user may act on (owned + active staff memberships). */
 async function accessibleStoreIds(userId) {
@@ -54,6 +55,14 @@ async function requireManage(userId, storeId) {
   }
 }
 
+async function requireStoreRole(userId, storeId, allowedRoles) {
+  const role = await roleOnStore(userId, storeId);
+  if (!role || !allowedRoles.includes(role)) {
+    throw new ForbiddenError('You do not have permission to perform this store operation');
+  }
+  return role;
+}
+
 /** List staff of a store (manager+). */
 async function list(userId, storeId) {
   await requireManage(userId, storeId);
@@ -92,4 +101,15 @@ async function remove(userId, storeId, staffUserId) {
   return { removed: true };
 }
 
-module.exports = { ROLES, accessibleStoreIds, roleOnStore, resolveActiveStore, list, invite, remove };
+module.exports = {
+  ROLES,
+  accessibleStoreIds,
+  roleOnStore,
+  resolveActiveStore,
+  requireStoreRole,
+  ORDER_OPERATIONS_ROLES,
+  MANAGE_ROLES,
+  list,
+  invite,
+  remove,
+};

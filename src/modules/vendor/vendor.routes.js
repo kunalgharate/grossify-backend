@@ -4,8 +4,9 @@ const bcrypt = require('bcryptjs');
 const { prisma } = require('../../shared/database');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate } = require('../../shared/middleware/auth');
-const { BadRequestError, NotFoundError, ForbiddenError } = require('../../shared/errors');
+const { BadRequestError, NotFoundError } = require('../../shared/errors');
 const { parsePagination, buildPagination } = require('../../shared/utils/pagination');
+const staffService = require('./staff.service');
 
 /**
  * @swagger
@@ -62,7 +63,7 @@ router.get('/my-store', authenticate, asyncHandler(async (req, res) => {
  *         description: Store orders
  */
 router.get('/orders', authenticate, asyncHandler(async (req, res) => {
-  const store = await require('./staff.service').resolveActiveStore(req.user.id);
+  const store = await staffService.resolveActiveStore(req.user.id);
   if (!store) throw new NotFoundError('Store not found');
 
   const { status, page = 1, limit = 20 } = req.query;
@@ -106,9 +107,9 @@ router.get('/orders', authenticate, asyncHandler(async (req, res) => {
  *         description: Order accepted
  */
 router.patch('/orders/:id/accept', authenticate, asyncHandler(async (req, res) => {
-  const order = await prisma.order.findUnique({ where: { id: req.params.id }, include: { store: true } });
+  const order = await prisma.order.findUnique({ where: { id: req.params.id } });
   if (!order) throw new NotFoundError('Order not found');
-  if (order.store.ownerId !== req.user.id) throw new ForbiddenError('Not your store order');
+  await staffService.requireStoreRole(req.user.id, order.storeId, staffService.ORDER_OPERATIONS_ROLES);
   if (order.status !== 'PLACED') throw new BadRequestError('Can only accept PLACED orders');
 
   const updated = await prisma.order.update({
@@ -147,10 +148,10 @@ router.patch('/orders/:id/accept', authenticate, asyncHandler(async (req, res) =
 router.patch('/orders/:id/reject', authenticate, asyncHandler(async (req, res) => {
   const order = await prisma.order.findUnique({
     where: { id: req.params.id },
-    include: { store: true, items: true },
+    include: { items: true },
   });
   if (!order) throw new NotFoundError('Order not found');
-  if (order.store.ownerId !== req.user.id) throw new ForbiddenError('Not your store order');
+  await staffService.requireStoreRole(req.user.id, order.storeId, staffService.MANAGE_ROLES);
   if (order.status !== 'PLACED') throw new BadRequestError('Can only reject PLACED orders');
 
   // Restore stock and cancel
@@ -186,9 +187,9 @@ router.patch('/orders/:id/reject', authenticate, asyncHandler(async (req, res) =
  *         description: Order marked ready
  */
 router.patch('/orders/:id/ready', authenticate, asyncHandler(async (req, res) => {
-  const order = await prisma.order.findUnique({ where: { id: req.params.id }, include: { store: true } });
+  const order = await prisma.order.findUnique({ where: { id: req.params.id } });
   if (!order) throw new NotFoundError('Order not found');
-  if (order.store.ownerId !== req.user.id) throw new ForbiddenError('Not your store order');
+  await staffService.requireStoreRole(req.user.id, order.storeId, staffService.ORDER_OPERATIONS_ROLES);
   if (!['ACCEPTED', 'PREPARING'].includes(order.status)) throw new BadRequestError('Order not in correct state');
 
   const updated = await prisma.order.update({
@@ -211,7 +212,7 @@ router.patch('/orders/:id/ready', authenticate, asyncHandler(async (req, res) =>
  *         description: Customer list
  */
 router.get('/customers', authenticate, asyncHandler(async (req, res) => {
-  const store = await require('./staff.service').resolveActiveStore(req.user.id);
+  const store = await staffService.resolveActiveStore(req.user.id);
   if (!store) throw new NotFoundError('Store not found');
 
   const where = { orders: { some: { storeId: store.id } } };
@@ -551,14 +552,12 @@ router.post('/stores/:storeId/kyc', authenticate, asyncHandler(async (req, res) 
  *               name: { type: string }
  */
 router.get('/stores/:storeId/staff', authenticate, asyncHandler(async (req, res) => {
-  const staff = require('./staff.service');
-  const members = await staff.list(req.user.id, req.params.storeId);
+  const members = await staffService.list(req.user.id, req.params.storeId);
   res.json({ staff: members });
 }));
 
 router.post('/stores/:storeId/staff', authenticate, asyncHandler(async (req, res) => {
-  const staff = require('./staff.service');
-  const member = await staff.invite(req.user.id, req.params.storeId, req.body || {});
+  const member = await staffService.invite(req.user.id, req.params.storeId, req.body || {});
   res.status(201).json({ staff: member });
 }));
 
@@ -568,8 +567,7 @@ router.post('/stores/:storeId/staff', authenticate, asyncHandler(async (req, res
  *   delete: { summary: Remove a staff member (owner/manager), tags: [Vendor], security: [{ bearerAuth: [] }] }
  */
 router.delete('/stores/:storeId/staff/:userId', authenticate, asyncHandler(async (req, res) => {
-  const staff = require('./staff.service');
-  const result = await staff.remove(req.user.id, req.params.storeId, req.params.userId);
+  const result = await staffService.remove(req.user.id, req.params.storeId, req.params.userId);
   res.json(result);
 }));
 

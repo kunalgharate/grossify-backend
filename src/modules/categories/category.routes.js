@@ -2,8 +2,32 @@ const express = require('express');
 const router = express.Router();
 const { prisma } = require('../../shared/database');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
-const { cacheMiddleware } = require('../../shared/middleware/cache');
+const { cacheMiddleware, invalidateCache } = require('../../shared/middleware/cache');
+const { authenticate, requireStaff, requireRoles } = require('../../shared/middleware/auth');
+const { auditLog } = require('../../shared/middleware/auditLog');
+const categoryService = require('./category.service');
 
+/**
+ * @swagger
+ * /api/v1/categories/admin:
+ *   get:
+ *     summary: List all categories for staff, including inactive categories
+ *     tags: [Categories]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, minimum: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 100 }
+ *     responses:
+ *       200:
+ *         description: Categories and pagination metadata
+ *       403:
+ *         description: Requires a staff role
+ */
 /**
  * @swagger
  * tags:
@@ -44,6 +68,115 @@ router.get('/', cacheMiddleware(3600), asyncHandler(async (req, res) => {
   res.json({ categories: roots });
 }));
 
+router.get('/admin', authenticate, requireStaff, asyncHandler(async (req, res) => {
+  const result = await categoryService.listAdmin(req.query);
+  res.json(result);
+}));
+
+/**
+ * @swagger
+ * /api/v1/categories/admin:
+ *   post:
+ *     summary: Create a catalog category
+ *     tags: [Categories]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name]
+ *             properties:
+ *               name: { type: string }
+ *               slug: { type: string }
+ *               parentId: { type: string, nullable: true }
+ *               icon: { type: string }
+ *               sortOrder: { type: integer }
+ *               radius: { type: integer }
+ *     responses:
+ *       201:
+ *         description: Category created
+ *       403:
+ *         description: Requires admin or manager
+ */
+router.post(
+  '/admin',
+  authenticate,
+  requireRoles('admin', 'manager'),
+  auditLog('categories.create'),
+  asyncHandler(async (req, res) => {
+    const category = await categoryService.create(req.body || {});
+    await invalidateCache('cache:/api/v1/categories*');
+    res.status(201).json({ category });
+  }),
+);
+
+/**
+ * @swagger
+ * /api/v1/categories/admin/{id}:
+ *   patch:
+ *     summary: Update a category or reactivate an inactive category
+ *     tags: [Categories]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Category updated
+ *       403:
+ *         description: Requires admin or manager
+ *       404:
+ *         description: Category not found
+ */
+router.patch(
+  '/admin/:id',
+  authenticate,
+  requireRoles('admin', 'manager'),
+  auditLog('categories.update'),
+  asyncHandler(async (req, res) => {
+    const category = await categoryService.update(req.params.id, req.body || {});
+    await invalidateCache('cache:/api/v1/categories*');
+    res.json({ category });
+  }),
+);
+
+/**
+ * @swagger
+ * /api/v1/categories/admin/{id}:
+ *   delete:
+ *     summary: Deactivate a category without deleting historical references
+ *     tags: [Categories]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Category deactivated
+ *       400:
+ *         description: Active child categories must be deactivated first
+ */
+router.delete(
+  '/admin/:id',
+  authenticate,
+  requireRoles('admin', 'manager'),
+  auditLog('categories.deactivate'),
+  asyncHandler(async (req, res) => {
+    const category = await categoryService.deactivate(req.params.id);
+    await invalidateCache('cache:/api/v1/categories*');
+    res.json({ category, message: 'Category deactivated' });
+  }),
+);
+
 /**
  * @swagger
  * /api/v1/categories/{slug}:
@@ -65,7 +198,9 @@ router.get('/:slug', asyncHandler(async (req, res) => {
     where: { slug: req.params.slug },
     include: { children: { where: { isActive: true } } },
   });
-  if (!category) return res.status(404).json({ error: 'NOT_FOUND', message: 'Category not found' });
+  if (!category || !category.isActive) {
+    return res.status(404).json({ error: 'NOT_FOUND', message: 'Category not found' });
+  }
   res.json({ category });
 }));
 
