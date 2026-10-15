@@ -3,7 +3,7 @@ const router = express.Router();
 const { prisma } = require('../../shared/database');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate } = require('../../shared/middleware/auth');
-const { BadRequestError, NotFoundError } = require('../../shared/errors');
+const { BadRequestError, NotFoundError, ForbiddenError } = require('../../shared/errors');
 
 /**
  * @swagger
@@ -150,10 +150,10 @@ router.post('/', authenticate, asyncHandler(async (req, res) => {
     + '-' + Math.random().toString(36).substring(2, 6);
 
   const product = await prisma.masterProduct.create({
-    data: { name, slug, categoryId, brand, description, mrp, unit: unit || 'piece', barcode, hsn, images: images || [], attributes },
+    data: { name, slug, categoryId, brand, description, mrp, unit: unit || 'piece', barcode, hsn, images: images || [], attributes, status: 'pending' },
   });
 
-  res.status(201).json({ product, message: 'Added to master catalog' });
+  res.status(201).json({ product, message: 'Added to master catalog — pending admin approval' });
 }));
 
 /**
@@ -196,6 +196,8 @@ router.post('/:id/add-to-store', authenticate, asyncHandler(async (req, res) => 
   const masterProduct = await prisma.masterProduct.findUnique({ where: { id: req.params.id } });
   if (!masterProduct) throw new NotFoundError('Master product not found');
 
+  if (masterProduct.status !== 'approved') throw new BadRequestError('Product not yet approved by admin');
+
   // Verify store ownership
   const store = await prisma.store.findUnique({ where: { id: storeId } });
   if (!store || store.ownerId !== req.user.id) throw new BadRequestError('Invalid store');
@@ -221,6 +223,49 @@ router.post('/:id/add-to-store', authenticate, asyncHandler(async (req, res) => 
   });
 
   res.status(201).json({ product, message: 'Product added to your store from catalog' });
+}));
+
+/**
+ * @swagger
+ * /api/v1/catalog/{id}/approve:
+ *   post:
+ *     summary: Admin approves a master product
+ *     tags: [Catalog]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Master product ID
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               comments:
+ *                 type: string
+ *                 description: Admin comments
+ *     responses:
+ *       200:
+ *         description: Product approved and visible to vendors
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 product: { product: MasterProduct, message: string }
+ *       403:
+ *         description: Not admin or product already approved
+ */
+router.post('/:id/approve', authenticate, asyncHandler(async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') throw new ForbiddenError('Only admin/manager can approve');
+  const product = await prisma.masterProduct.update({ where: { id: req.params.id }, data: { status: 'approved', approvedAt: new Date(), approvedBy: req.user.id } });
+  res.json({ product, message: 'Product approved successfully' });
 }));
 
 module.exports = router;
