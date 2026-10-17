@@ -40,6 +40,37 @@ router.get('/my-store', authenticate, asyncHandler(async (req, res) => {
 
 /**
  * @swagger
+ * /api/v1/vendor/stores/{id}:
+ *   get:
+ *     summary: Get a store owned by the current user
+ *     tags: [Vendor]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Store details
+ *       404:
+ *         description: Store not found or not accessible
+ */
+router.get('/stores/:id', authenticate, asyncHandler(async (req, res) => {
+  const role = await staffService.roleOnStore(req.user.id, req.params.id);
+  if (role !== 'OWNER') throw new NotFoundError('Store not found');
+  const store = await prisma.store.findUnique({
+    where: { id: req.params.id },
+    include: { category: true, subscription: { include: { plan: true } } },
+  });
+  if (!store) throw new NotFoundError('Store not found');
+  res.json({ store });
+}));
+
+/**
+ * @swagger
  * /api/v1/vendor/orders:
  *   get:
  *     summary: Get orders for vendor's store

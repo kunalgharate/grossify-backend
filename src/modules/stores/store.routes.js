@@ -124,6 +124,13 @@ router.get('/:id', asyncHandler(storeController.getById));
  *                 type: string
  *               gstNumber:
  *                 type: string
+ *                 nullable: true
+ *               gstScheme:
+ *                 type: string
+ *                 enum: [REGULAR, COMPOSITION, UNREGISTERED]
+ *               stateCode:
+ *                 type: integer
+ *                 nullable: true
  *               fssaiNumber:
  *                 type: string
  *     responses:
@@ -163,6 +170,15 @@ router.post('/', authenticate, asyncHandler(storeController.create));
  *                 type: boolean
  *               businessHours:
  *                 type: object
+ *               gstScheme:
+ *                 type: string
+ *                 enum: [REGULAR, COMPOSITION, UNREGISTERED]
+ *               gstNumber:
+ *                 type: string
+ *                 nullable: true
+ *               stateCode:
+ *                 type: integer
+ *                 nullable: true
  *     responses:
  *       200:
  *         description: Store updated

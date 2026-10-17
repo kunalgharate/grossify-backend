@@ -58,6 +58,38 @@ describe('purchases.service', () => {
 
       expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
     });
+
+    it('creates a PO with server-calculated subtotal, tax, and total', async () => {
+      prisma.supplier = { findFirst: jest.fn().mockResolvedValue({ id: SUPPLIER_ID }) };
+      prisma.product = { findMany: jest.fn().mockResolvedValue([{ id: PRODUCT_ID }]) };
+      prisma.purchaseOrder = {
+        create: jest.fn().mockResolvedValue({ id: PURCHASE_ORDER_ID }),
+      };
+
+      await purchasesService.createPurchaseOrder(USER_ID, STORE_ID, {
+        supplierId: SUPPLIER_ID,
+        items: [{ productId: PRODUCT_ID, quantity: 2, costPrice: 12.5, taxRate: 5 }],
+      });
+
+      expect(prisma.purchaseOrder.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          storeId: STORE_ID,
+          supplierId: SUPPLIER_ID,
+          status: 'draft',
+          subtotal: 25,
+          taxAmount: 1.25,
+          total: 26.25,
+          items: {
+            create: [{
+              productId: PRODUCT_ID,
+              quantity: 2,
+              costPrice: 12.5,
+              taxRate: 5,
+            }],
+          },
+        }),
+      }));
+    });
   });
 
   describe('receiveGoods', () => {

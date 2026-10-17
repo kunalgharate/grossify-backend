@@ -1,6 +1,57 @@
 const { prisma } = require('../../shared/database');
 const { NotFoundError, BadRequestError, ForbiddenError } = require('../../shared/errors');
 
+const GST_SCHEMES = new Set(['REGULAR', 'COMPOSITION', 'UNREGISTERED']);
+const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+function validateGstProfile(data, store) {
+  const update = {};
+  const scheme = data.gstScheme ?? store.gstScheme ?? 'UNREGISTERED';
+  const gstNumberInput = data.gstNumber === undefined
+    ? store.gstNumber
+    : data.gstNumber;
+  const gstNumber = typeof gstNumberInput === 'string'
+    ? gstNumberInput.trim().toUpperCase() || null
+    : gstNumberInput;
+  const stateCode = data.stateCode === undefined ? store.stateCode : data.stateCode;
+
+  if (!GST_SCHEMES.has(scheme)) {
+    throw new BadRequestError('gstScheme must be REGULAR, COMPOSITION, or UNREGISTERED');
+  }
+  if (data.gstScheme !== undefined) update.gstScheme = scheme;
+
+  if (data.gstNumber !== undefined) {
+    if (data.gstNumber !== null && typeof data.gstNumber !== 'string') {
+      throw new BadRequestError('gstNumber must be a string or null');
+    }
+    update.gstNumber = gstNumber;
+  }
+
+  if (data.stateCode !== undefined) {
+    if (data.stateCode !== null &&
+        (!Number.isInteger(data.stateCode) || !((data.stateCode >= 1 && data.stateCode <= 38) || data.stateCode === 97))) {
+      throw new BadRequestError('stateCode must be a valid GST state code');
+    }
+    update.stateCode = data.stateCode;
+  }
+
+  if (scheme === 'UNREGISTERED') {
+    if (gstNumber) throw new BadRequestError('UNREGISTERED stores cannot have a GSTIN');
+    return update;
+  }
+  if (!gstNumber || !GSTIN_PATTERN.test(gstNumber)) {
+    throw new BadRequestError('A valid GSTIN is required for registered GST schemes');
+  }
+  if (stateCode == null) {
+    throw new BadRequestError('stateCode is required for registered GST schemes');
+  }
+  const gstinStateCode = Number(gstNumber.slice(0, 2));
+  if (gstinStateCode !== Number(stateCode)) {
+    throw new BadRequestError('GSTIN state code must match the selected state');
+  }
+  return update;
+}
+
 /**
  * Find nearby stores using basic distance calculation
  */
@@ -147,12 +198,19 @@ const getById = async (idOrSlug) => {
  * Create a new store (vendor registration)
  */
 const create = async (ownerId, data) => {
-  const { name, categoryId, description, address, city, state, pincode, latitude, longitude, phone, gstNumber, fssaiNumber, storeType } = data;
+  const {
+    name, categoryId, description, address, city, state, pincode, latitude,
+    longitude, phone, fssaiNumber, storeType,
+  } = data;
 
   if (!name || !categoryId || !address || !city || !state || !pincode || !latitude || !longitude) {
     throw new BadRequestError('Required fields: name, categoryId, address, city, state, pincode, latitude, longitude');
   }
 
+  const hasGstProfile = ['gstScheme', 'gstNumber', 'stateCode'].some((field) => data[field] !== undefined);
+  const gstProfile = hasGstProfile
+    ? validateGstProfile(data, { gstScheme: 'UNREGISTERED', gstNumber: null, stateCode: null })
+    : {};
   const normalizedType = storeType === 'B2B' ? 'B2B' : 'B2C';
 
   // Verify category exists
@@ -179,8 +237,9 @@ const create = async (ownerId, data) => {
       longitude,
       storeType: normalizedType,
       phone: phone || null,
-      gstNumber: gstNumber || null,
+      gstNumber: gstProfile.gstNumber ?? null,
       fssaiNumber: fssaiNumber || null,
+      ...gstProfile,
       status: 'PENDING',
     },
     include: {
@@ -207,7 +266,7 @@ const update = async (storeId, userId, data) => {
 
   // Fields allowed to update
   const allowedFields = ['name', 'description', 'address', 'city', 'state', 'pincode',
-    'latitude', 'longitude', 'isOpen', 'businessHours', 'phone', 'gstNumber', 'fssaiNumber', 'status',
+    'latitude', 'longitude', 'isOpen', 'businessHours', 'phone', 'fssaiNumber', 'status',
     'storeType', 'logoUrl', 'bannerUrl'];
 
   const updateData = {};
@@ -219,6 +278,9 @@ const update = async (storeId, userId, data) => {
   // Validate storeType if provided.
   if (updateData.storeType !== undefined && !['B2C', 'B2B'].includes(updateData.storeType)) {
     throw new BadRequestError('storeType must be B2C or B2B');
+  }
+  if (data.gstNumber !== undefined || data.gstScheme !== undefined || data.stateCode !== undefined) {
+    Object.assign(updateData, validateGstProfile(data, store));
   }
 
   const updated = await prisma.store.update({
