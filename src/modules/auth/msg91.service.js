@@ -3,8 +3,9 @@ const config = require('../../shared/config');
 
 const MSG91_BASE = 'https://control.msg91.com/api/v5';
 
-// Demo mode: when MSG91_AUTH_KEY is not set or is 'xxx' or 'demo'
-const isDemoMode = !config.msg91.authKey || config.msg91.authKey === 'xxx' || config.msg91.authKey === 'demo';
+// Keep the fixed OTP strictly out of production, even if MSG91 is unconfigured.
+const isDemoMode = config.nodeEnv !== 'production' &&
+  (!config.msg91.authKey || config.msg91.authKey === 'xxx' || config.msg91.authKey === 'demo');
 const DEMO_OTP = '123456'; // Fixed OTP for demo/development
 
 if (isDemoMode) {
@@ -135,4 +136,4 @@ const verifyWidgetToken = async (accessToken) => {
   }
 };
 
-module.exports = { sendOtp, verifyOtp, sendSms, verifyWidgetToken };
+module.exports = { sendOtp, verifyOtp, sendSms, verifyWidgetToken, isDemoMode };

@@ -2,14 +2,18 @@ const express = require('express');
 const router = express.Router();
 const { rateLimit } = require('express-rate-limit');
 const authController = require('./auth.controller');
+const msg91 = require('./msg91.service');
+const config = require('../../shared/config');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate } = require('../../shared/middleware/auth');
 
 // Stricter limiter for OTP endpoints: these trigger SMS (cost) and are a common
 // abuse/enumeration target, so they get a tighter cap than the global /api limiter.
+// Local fixed-OTP development does not send SMS and should not lock out testers.
 const otpLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
   max: 5, // 5 OTP attempts per IP per window
+  skip: () => config.nodeEnv !== 'production' && msg91.isDemoMode,
   message: { error: 'TOO_MANY_REQUESTS', message: 'Too many OTP requests. Try again in a few minutes.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -93,7 +97,7 @@ router.post('/login', asyncHandler(authController.login));
  *     description: |
  *       Sends a 6-digit OTP to the provided phone number via MSG91.
  *       
- *       **Demo Mode:** When MSG91_AUTH_KEY is not configured (or set to 'xxx'/'demo'),
+ *       **Development Demo Mode:** Outside production, when MSG91_AUTH_KEY is not configured (or set to 'xxx'/'demo'),
  *       the API runs in demo mode — no real SMS is sent and the OTP is always `123456`.
  *     tags: [Auth]
  *     requestBody:
@@ -136,7 +140,7 @@ router.post('/send-otp', otpLimiter, asyncHandler(authController.sendOtp));
  *       Verifies the OTP sent to the phone number. If the user doesn't exist, a new account is created automatically.
  *       Returns JWT access and refresh tokens on success.
  *       
- *       **Demo Mode:** Use OTP `123456` when MSG91_AUTH_KEY is not configured.
+ *       **Development Demo Mode:** Use OTP `123456` when MSG91_AUTH_KEY is not configured outside production.
  *     tags: [Auth]
  *     requestBody:
  *       required: true
@@ -193,7 +197,7 @@ router.post('/verify-otp', otpLimiter, asyncHandler(authController.verifyOtp));
  *       After the user completes OTP verification on the widget, it returns a JWT access token.
  *       Send that token here to authenticate the user and receive app-level JWT tokens.
  *       
- *       **Demo Mode:** When MSG91_AUTH_KEY is not configured, any token is accepted
+ *       **Development Demo Mode:** When MSG91_AUTH_KEY is not configured outside production, any token is accepted
  *       and returns a dummy phone number (919876543210).
  *     tags: [Auth]
  *     requestBody:
