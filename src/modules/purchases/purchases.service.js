@@ -21,6 +21,40 @@ function seq(prefix) {
   return `${prefix}-${ds}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
 }
 
+async function validateSupplierAndProducts(db, storeId, supplierId, items) {
+  if (items.some((item) => !item || typeof item !== 'object')) {
+    throw new BadRequestError('Each item must be an object');
+  }
+  const supplier = await db.supplier.findFirst({
+    where: { id: supplierId, storeId, isActive: true },
+    select: { id: true },
+  });
+  if (!supplier) throw new NotFoundError('Supplier not found');
+
+  const productIds = items.map((item) => item.productId);
+  if (productIds.some((id) => !id) || new Set(productIds).size !== productIds.length) {
+    throw new BadRequestError('Each item must have a unique productId');
+  }
+
+  const products = await db.product.findMany({
+    where: { id: { in: productIds }, storeId },
+    select: { id: true },
+  });
+  if (products.length !== productIds.length) throw new NotFoundError('Product not found');
+}
+
+function validatePositiveInteger(value, field) {
+  if (!Number.isInteger(Number(value)) || Number(value) <= 0) {
+    throw new BadRequestError(`${field} must be a positive integer`);
+  }
+}
+
+function validateMoney(value, field) {
+  if (!Number.isFinite(Number(value)) || Number(value) < 0) {
+    throw new BadRequestError(`${field} must be a non-negative number`);
+  }
+}
+
 // ── Suppliers ─────────────────────────────────────────────
 async function createSupplier(userId, storeId, data) {
   await requireOwnStore(userId, storeId);
@@ -45,8 +79,15 @@ async function createPurchaseOrder(userId, storeId, data) {
   if (!supplierId || !Array.isArray(items) || items.length === 0) {
     throw new BadRequestError('supplierId and items[] are required');
   }
+  await validateSupplierAndProducts(prisma, storeId, supplierId, items);
   let subtotal = 0, taxAmount = 0;
   for (const it of items) {
+    validatePositiveInteger(it.quantity, 'quantity');
+    validateMoney(it.costPrice, 'costPrice');
+    if (it.taxRate != null && (!Number.isFinite(Number(it.taxRate)) ||
+        Number(it.taxRate) < 0 || Number(it.taxRate) > 100)) {
+      throw new BadRequestError('taxRate must be between 0 and 100');
+    }
     const line = Number(it.costPrice) * Number(it.quantity);
     subtotal += line;
     taxAmount += line * (Number(it.taxRate) || 0) / 100;
@@ -97,6 +138,33 @@ async function receiveGoods(userId, storeId, data) {
   }
 
   return prisma.$transaction(async (tx) => {
+    await validateSupplierAndProducts(tx, storeId, supplierId, items);
+    for (const it of items) {
+      validatePositiveInteger(it.qtyReceived, 'qtyReceived');
+      validateMoney(it.costPrice, 'costPrice');
+      if (it.mrp != null) validateMoney(it.mrp, 'mrp');
+    }
+
+    let po;
+    if (purchaseOrderId) {
+      po = await tx.purchaseOrder.findUnique({
+        where: { id: purchaseOrderId }, include: { items: true },
+      });
+      if (!po || po.storeId !== storeId || po.supplierId !== supplierId) {
+        throw new NotFoundError('Purchase order not found');
+      }
+      if (po.status === 'cancelled' || po.status === 'received') {
+        throw new BadRequestError('Purchase order cannot receive additional goods');
+      }
+      for (const it of items) {
+        const poItem = po.items.find((line) => line.productId === it.productId);
+        if (!poItem) throw new BadRequestError('Received product is not on the purchase order');
+        if (poItem.qtyReceived + Number(it.qtyReceived) > poItem.quantity) {
+          throw new BadRequestError('Received quantity exceeds the purchase order balance');
+        }
+      }
+    }
+
     const grn = await tx.goodsReceipt.create({
       data: {
         storeId, supplierId, purchaseOrderId: purchaseOrderId || null,
@@ -142,27 +210,20 @@ async function receiveGoods(userId, storeId, data) {
     }
 
     // Update PO received quantities + status.
-    if (purchaseOrderId) {
-      const po = await tx.purchaseOrder.findUnique({
-        where: { id: purchaseOrderId }, include: { items: true },
-      });
-      if (po) {
-        for (const it of items) {
-          const poItem = po.items.find((p) => p.productId === it.productId);
-          if (poItem) {
-            await tx.pOItem.update({
-              where: { id: poItem.id },
-              data: { qtyReceived: { increment: it.qtyReceived } },
-            });
-          }
-        }
-        const refreshed = await tx.pOItem.findMany({ where: { purchaseOrderId } });
-        const fullyReceived = refreshed.every((p) => p.qtyReceived >= p.quantity);
-        await tx.purchaseOrder.update({
-          where: { id: purchaseOrderId },
-          data: { status: fullyReceived ? 'received' : 'partially_received' },
+    if (po) {
+      for (const it of items) {
+        const poItem = po.items.find((p) => p.productId === it.productId);
+        await tx.pOItem.update({
+          where: { id: poItem.id },
+          data: { qtyReceived: { increment: it.qtyReceived } },
         });
       }
+      const refreshed = await tx.pOItem.findMany({ where: { purchaseOrderId } });
+      const fullyReceived = refreshed.every((p) => p.qtyReceived >= p.quantity);
+      await tx.purchaseOrder.update({
+        where: { id: purchaseOrderId },
+        data: { status: fullyReceived ? 'received' : 'partially_received' },
+      });
     }
 
     await tx.supplier.update({

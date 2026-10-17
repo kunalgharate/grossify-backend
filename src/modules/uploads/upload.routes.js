@@ -46,6 +46,14 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
 
+const validatePublicType = (req, _res, next) => {
+  const type = req.query.type || 'general';
+  if (typeof type !== 'string' || !['products', 'stores', 'users', 'general'].includes(type)) {
+    return next(new BadRequestError('Invalid upload type'));
+  }
+  next();
+};
+
 /**
  * @swagger
  * tags:
@@ -84,7 +92,7 @@ const upload = multer({
  *       400:
  *         description: No file provided or invalid format
  */
-router.post('/image', authenticate, upload.single('image'), asyncHandler(async (req, res) => {
+router.post('/image', authenticate, validatePublicType, upload.single('image'), asyncHandler(async (req, res) => {
   if (!req.file) {
     throw new BadRequestError('No image file provided');
   }
@@ -133,7 +141,7 @@ router.post('/image', authenticate, upload.single('image'), asyncHandler(async (
  *       400:
  *         description: No files provided or invalid format
  */
-router.post('/images', authenticate, upload.array('images', 5), asyncHandler(async (req, res) => {
+router.post('/images', authenticate, validatePublicType, upload.array('images', 5), asyncHandler(async (req, res) => {
   if (!req.files || req.files.length === 0) {
     throw new BadRequestError('No image files provided');
   }

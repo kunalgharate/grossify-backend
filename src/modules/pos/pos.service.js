@@ -3,6 +3,7 @@ const { BadRequestError, NotFoundError, ForbiddenError } = require('../../shared
 const inventoryService = require('../products/inventory.service');
 const stockLedger = require('../inventory/inventory.service');
 const taxService = require('../tax/tax.service');
+const staffService = require('../vendor/staff.service');
 
 /**
  * POS service — offline-capable counter billing.
@@ -15,12 +16,15 @@ const taxService = require('../tax/tax.service');
  */
 
 const TENDER_METHODS = ['CASH', 'CARD', 'UPI', 'WALLET', 'CREDIT', 'CHEQUE', 'RAZORPAY'];
+const BILLING_ROLES = ['OWNER', 'MANAGER', 'CASHIER'];
+const BILL_READ_ROLES = ['OWNER', 'MANAGER', 'STAFF', 'CASHIER'];
+const REPORT_ROLES = ['OWNER', 'MANAGER'];
 
-/** Resolve the caller's store and assert ownership. */
-async function requireOwnStore(userId, storeId) {
+/** Resolve a store after verifying the caller's store-scoped role. */
+async function requireStoreAccess(userId, storeId, allowedRoles) {
   const store = await prisma.store.findUnique({ where: { id: storeId } });
   if (!store) throw new NotFoundError('Store not found');
-  if (store.ownerId !== userId) throw new ForbiddenError('Not your store');
+  await staffService.requireStoreRole(userId, storeId, allowedRoles);
   return store;
 }
 
@@ -45,14 +49,16 @@ async function syncBill(userId, data) {
   if (!storeId || !localUuid) throw new BadRequestError('storeId and localUuid are required');
   if (!Array.isArray(items) || items.length === 0) throw new BadRequestError('items[] is required');
 
-  // Idempotency: a bill with this localUuid already synced → return it.
+  const store = await requireStoreAccess(userId, storeId, BILLING_ROLES);
+
+  // Authorization must precede idempotency lookup to prevent cross-store order disclosure.
   const existing = await prisma.order.findUnique({ where: { localUuid } });
   if (existing) {
+    if (existing.storeId !== storeId) throw new ForbiddenError('This bill belongs to another store');
     const invoice = await prisma.invoice.findUnique({ where: { orderId: existing.id } });
     return { order: existing, invoice, alreadyExisted: true };
   }
 
-  const store = await requireOwnStore(userId, storeId);
   const deductStock = store.vendorType === 'GROCERY' || store.vendorType === 'GENERAL_RETAIL';
 
   for (const t of tenders) {
@@ -156,7 +162,7 @@ async function syncBill(userId, data) {
 async function setHold(userId, orderId, hold) {
   const order = await prisma.order.findUnique({ where: { id: orderId }, include: { store: true } });
   if (!order) throw new NotFoundError('Order not found');
-  if (order.store.ownerId !== userId) throw new ForbiddenError('Not your order');
+  await requireStoreAccess(userId, order.storeId, BILLING_ROLES);
   if (order.channel !== 'POS') throw new BadRequestError('Only POS bills can be held');
   return prisma.order.update({
     where: { id: orderId },
@@ -166,7 +172,7 @@ async function setHold(userId, orderId, hold) {
 
 /** List store bills (both channels), filterable. */
 async function listBills(userId, { storeId, channel, status, page = 1, limit = 20 }) {
-  const store = await requireOwnStore(userId, storeId);
+  const store = await requireStoreAccess(userId, storeId, BILL_READ_ROLES);
   const where = { storeId: store.id };
   if (channel) where.channel = channel;
   if (status) where.status = status;
@@ -185,7 +191,7 @@ async function listBills(userId, { storeId, channel, status, page = 1, limit = 2
 
 /** Compute + persist a day-close (Z-report) for a store/business date. */
 async function dayClose(userId, { storeId, businessDate, openingCash = 0, terminalId = null }) {
-  const store = await requireOwnStore(userId, storeId);
+  const store = await requireStoreAccess(userId, storeId, REPORT_ROLES);
   const date = businessDate ? new Date(businessDate) : new Date();
   const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
   const dayEnd = new Date(date); dayEnd.setHours(23, 59, 59, 999);

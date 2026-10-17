@@ -1,9 +1,14 @@
+process.env.JWT_EXPIRES_IN = '15m';
+process.env.JWT_REFRESH_EXPIRES_IN = '7d';
+
 const request = require('supertest');
 const app = require('../../src/app');
 const { prisma } = require('../../src/shared/database');
+const { acceptCurrentOrderPolicies } = require('../fixtures/order-policy-acceptance');
 
 let vendorToken, customerToken, agentToken;
 let storeId, productId, orderId, categoryId;
+let cleanupPolicyAcceptances;
 
 beforeAll(async () => {
   await prisma.review.deleteMany({});
@@ -13,6 +18,7 @@ beforeAll(async () => {
   await prisma.productVariant.deleteMany({});
   await prisma.product.deleteMany({});
   await prisma.subscription.deleteMany({});
+  await prisma.invoiceSeries.deleteMany({});
   await prisma.store.deleteMany({});
   await prisma.address.deleteMany({});
   await prisma.auditLog.deleteMany({});
@@ -29,6 +35,7 @@ beforeAll(async () => {
   // Create customer
   const customer = await request(app).post('/api/v1/auth/register').send({ name: 'Flow Customer', phone: '+91FLOW002', password: 'Test@1234' });
   customerToken = customer.body.accessToken;
+  cleanupPolicyAcceptances = await acceptCurrentOrderPolicies(prisma, customer.body.user.id);
 
   // Create delivery agent
   const agent = await request(app).post('/api/v1/auth/register').send({ name: 'Flow Agent', phone: '+91FLOW003', password: 'Test@1234' });
@@ -54,6 +61,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (cleanupPolicyAcceptances) await cleanupPolicyAcceptances();
   await prisma.review.deleteMany({});
   await prisma.offer.deleteMany({});
   await prisma.orderItem.deleteMany({});
@@ -61,6 +69,7 @@ afterAll(async () => {
   await prisma.productVariant.deleteMany({});
   await prisma.product.deleteMany({});
   await prisma.subscription.deleteMany({});
+  await prisma.invoiceSeries.deleteMany({});
   await prisma.store.deleteMany({});
   await prisma.address.deleteMany({});
   await prisma.auditLog.deleteMany({});

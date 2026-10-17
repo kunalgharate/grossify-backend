@@ -123,12 +123,18 @@ const login = async ({ identifier, password }) => {
 
   if (!user) throw new UnauthorizedError('Invalid credentials');
   if (user.status !== 'ACTIVE') throw new UnauthorizedError('Account is suspended or deactivated');
-  if (!user.passwordHash) throw new UnauthorizedError('Invalid credentials');
+  if (!user.passwordHash || user.isTempPassword) throw new UnauthorizedError('Invalid credentials');
 
   const isValid = await bcrypt.compare(password, user.passwordHash);
   if (!isValid) throw new UnauthorizedError('Invalid credentials');
 
-  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      lastLoginAt: new Date(),
+      ...(user.isTempPassword ? { passwordHash: null, isTempPassword: false } : {}),
+    },
+  });
 
   const tokens = generateTokens(user.id);
   const context = await resolveUserContext(user.id);
@@ -181,7 +187,13 @@ const verifyOtp = async (phone, otp) => {
     isNewUser = true;
   }
 
-  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      lastLoginAt: new Date(),
+      ...(user.isTempPassword ? { passwordHash: null, isTempPassword: false } : {}),
+    },
+  });
 
   const tokens = generateTokens(user.id);
   const context = await resolveUserContext(user.id);
@@ -222,7 +234,13 @@ const verifyWidgetToken = async (accessToken) => {
     isNewUser = true;
   }
 
-  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      lastLoginAt: new Date(),
+      ...(user.isTempPassword ? { passwordHash: null, isTempPassword: false } : {}),
+    },
+  });
 
   const tokens = generateTokens(user.id);
   const context = await resolveUserContext(user.id);

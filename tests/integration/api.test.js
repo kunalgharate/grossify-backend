@@ -1,6 +1,10 @@
+process.env.JWT_EXPIRES_IN = '15m';
+process.env.JWT_REFRESH_EXPIRES_IN = '7d';
+
 const request = require('supertest');
 const app = require('../../src/app');
 const { prisma } = require('../../src/shared/database');
+const { acceptCurrentOrderPolicies } = require('../fixtures/order-policy-acceptance');
 
 let token;
 let userId;
@@ -8,6 +12,7 @@ let storeId;
 let productId;
 let orderId;
 let categoryId;
+let cleanupPolicyAcceptances;
 
 beforeAll(async () => {
   // Clean test data
@@ -28,6 +33,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (cleanupPolicyAcceptances) await cleanupPolicyAcceptances();
   // Cleanup
   await prisma.orderItem.deleteMany({});
   await prisma.order.deleteMany({});
@@ -62,6 +68,7 @@ describe('Auth API', () => {
     expect(res.body.refreshToken).toBeDefined();
     token = res.body.accessToken;
     userId = res.body.user.id;
+    cleanupPolicyAcceptances = await acceptCurrentOrderPolicies(prisma, userId);
   });
 
   test('POST /api/v1/auth/register - should reject duplicate phone', async () => {

@@ -7,6 +7,7 @@ const inventoryService = require('../products/inventory.service');
 const notificationService = require('../notifications/notification.service');
 const { computeDeliveryFee } = require('../delivery/delivery-fee');
 const config = require('../../shared/config');
+const complianceService = require('../compliance/compliance.service');
 const {
   emitNewOrder,
   emitOrderStatus,
@@ -48,6 +49,7 @@ const place = async (customerId, data) => {
   if (!['COD', 'ONLINE'].includes(paymentMethod)) {
     throw new BadRequestError('Unsupported payment method (use COD or ONLINE)');
   }
+  await complianceService.assertCurrentOrderPoliciesAccepted(customerId);
 
   // Verify store is active and open
   const store = await prisma.store.findUnique({ where: { id: storeId } });

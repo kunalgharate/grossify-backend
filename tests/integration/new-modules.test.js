@@ -1,6 +1,12 @@
+process.env.JWT_EXPIRES_IN = '15m';
+process.env.JWT_REFRESH_EXPIRES_IN = '7d';
+
 const request = require('supertest');
+const fs = require('fs');
+const path = require('path');
 const app = require('../../src/app');
 const { prisma } = require('../../src/shared/database');
+const { acceptCurrentOrderPolicies } = require('../fixtures/order-policy-acceptance');
 
 let token;
 let userId;
@@ -8,6 +14,7 @@ let storeId;
 let productId;
 let orderId;
 let categoryId;
+let cleanupPolicyAcceptances;
 
 beforeAll(async () => {
   // Clean
@@ -35,6 +42,7 @@ beforeAll(async () => {
   });
   token = reg.body.accessToken;
   userId = reg.body.user.id;
+  cleanupPolicyAcceptances = await acceptCurrentOrderPolicies(prisma, userId);
 
   // Create store and activate it
   const storeRes = await request(app).post('/api/v1/stores')
@@ -56,6 +64,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (cleanupPolicyAcceptances) await cleanupPolicyAcceptances();
   await prisma.review.deleteMany({});
   await prisma.offer.deleteMany({});
   await prisma.orderItem.deleteMany({});
@@ -93,8 +102,11 @@ describe('Vendor API', () => {
       .send({ phone: '+91NEW999', name: 'New Customer' });
 
     expect(res.status).toBe(201);
-    expect(res.body.tempPassword).toBeDefined();
-    expect(res.body.customer.phone).toBe('+91NEW999');
+    expect(res.body.tempPassword).toBeUndefined();
+    expect(res.text).not.toMatch(/password/i);
+    expect(res.body.message).toMatch(/phone OTP/i);
+    expect(res.body.customer).toBeUndefined();
+    expect(res.text).not.toContain('+91NEW999');
   });
 
   test('POST /api/v1/vendor/customers/add - existing user returns 200', async () => {
@@ -110,6 +122,31 @@ describe('Vendor API', () => {
     const res = await request(app).get('/api/v1/vendor/analytics').set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
     expect(res.body.analytics.totalProducts).toBeGreaterThan(0);
+  });
+
+  test('POST /api/v1/orders rejects missing current policy acceptance', async () => {
+    await prisma.policyAcceptance.deleteMany({ where: { userId } });
+    const address = await prisma.address.findFirst({ where: { userId } });
+    const response = await request(app)
+      .post('/api/v1/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        storeId,
+        items: [{ productId, quantity: 1 }],
+        addressId: address.id,
+        paymentMethod: 'COD',
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe('POLICY_ACCEPTANCE_REQUIRED');
+
+    const policies = await prisma.policyVersion.findMany({
+      where: { isCurrent: true, policyType: { in: ['TOS', 'PRIVACY'] } },
+      select: { policyType: true, version: true },
+    });
+    await prisma.policyAcceptance.createMany({
+      data: policies.map((policy) => ({ userId, ...policy })),
+    });
   });
 
   test('Vendor order accept/reject flow', async () => {
@@ -250,22 +287,21 @@ describe('Upload API', () => {
     expect(res.status).toBe(400);
   });
 
-  test('POST /api/v1/upload/image - should process and return variants', async () => {
+  test('POST /api/v1/upload/image - should store an image in its public category', async () => {
     // Create a simple 1x1 red pixel PNG buffer
     const pngBuffer = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
       'base64'
     );
 
-    const res = await request(app).post('/api/v1/upload/image')
+    const res = await request(app).post('/api/v1/upload/image?type=products')
       .set('Authorization', `Bearer ${token}`)
-      .attach('file', pngBuffer, 'test.png')
-      .field('folder', 'products');
+      .attach('image', pngBuffer, 'test.png');
 
     expect(res.status).toBe(200);
-    expect(res.body.url).toBeDefined();
-    expect(res.body.variants.thumbnail).toBeDefined();
-    expect(res.body.variants.medium).toBeDefined();
-    expect(res.body.variants.large).toBeDefined();
+    expect(res.body.url).toMatch(/^\/uploads\/products\//);
+    const uploadedPath = path.join(process.cwd(), res.body.url.replace(/^\//, ''));
+    expect(fs.existsSync(uploadedPath)).toBe(true);
+    fs.unlinkSync(uploadedPath);
   });
 });

@@ -1,8 +1,13 @@
+process.env.JWT_EXPIRES_IN = '15m';
+process.env.JWT_REFRESH_EXPIRES_IN = '7d';
+
 const request = require('supertest');
 const app = require('../../src/app');
 const { prisma } = require('../../src/shared/database');
+const { acceptCurrentOrderPolicies } = require('../fixtures/order-policy-acceptance');
 
 let token, storeId, productId, orderId, categoryId;
+let cleanupPolicyAcceptances;
 
 beforeAll(async () => {
   await prisma.refund.deleteMany({});
@@ -16,6 +21,7 @@ beforeAll(async () => {
   await prisma.productVariant.deleteMany({});
   await prisma.product.deleteMany({});
   await prisma.subscription.deleteMany({});
+  await prisma.invoiceSeries.deleteMany({});
   await prisma.store.deleteMany({});
   await prisma.address.deleteMany({});
   await prisma.notification.deleteMany({});
@@ -27,6 +33,7 @@ beforeAll(async () => {
   // Setup: user + store + product
   const reg = await request(app).post('/api/v1/auth/register').send({ name: 'Phase User', phone: '+91PH001', password: 'Test@1234' });
   token = reg.body.accessToken;
+  cleanupPolicyAcceptances = await acceptCurrentOrderPolicies(prisma, reg.body.user.id);
 
   const storeRes = await request(app).post('/api/v1/stores')
     .set('Authorization', `Bearer ${token}`)
@@ -45,6 +52,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (cleanupPolicyAcceptances) await cleanupPolicyAcceptances();
   await prisma.refund.deleteMany({});
   await prisma.invoice.deleteMany({});
   await prisma.cartItem.deleteMany({});
@@ -56,6 +64,7 @@ afterAll(async () => {
   await prisma.productVariant.deleteMany({});
   await prisma.product.deleteMany({});
   await prisma.subscription.deleteMany({});
+  await prisma.invoiceSeries.deleteMany({});
   await prisma.store.deleteMany({});
   await prisma.address.deleteMany({});
   await prisma.notification.deleteMany({});

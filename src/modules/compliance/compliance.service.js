@@ -1,5 +1,5 @@
 const { prisma } = require('../../shared/database');
-const { BadRequestError, NotFoundError } = require('../../shared/errors');
+const { BadRequestError, ForbiddenError, InternalError, NotFoundError } = require('../../shared/errors');
 
 /**
  * Legal & compliance service (India DPDP Act 2023 + Consumer Protection
@@ -9,6 +9,7 @@ const { BadRequestError, NotFoundError } = require('../../shared/errors');
  */
 
 const POLICY_TYPES = ['TOS', 'PRIVACY', 'RETURN_REFUND', 'SHIPPING', 'CANCELLATION', 'SELLER', 'RIDER'];
+const REQUIRED_ORDER_POLICY_TYPES = ['TOS', 'PRIVACY'];
 
 // ── Policies ────────────────────────────────────────────────────────────────
 const currentPolicies = async () =>
@@ -29,6 +30,47 @@ const acceptPolicy = async (userId, policyType, version) => {
   if (!POLICY_TYPES.includes(policyType)) throw new BadRequestError(`Invalid policyType: ${policyType}`);
   if (!version) throw new BadRequestError('version is required');
   return prisma.policyAcceptance.create({ data: { userId, policyType, version } });
+};
+
+const assertCurrentOrderPoliciesAccepted = async (userId) => {
+  const currentPolicies = await prisma.policyVersion.findMany({
+    where: { isCurrent: true, policyType: { in: REQUIRED_ORDER_POLICY_TYPES } },
+    select: { policyType: true, version: true },
+  });
+  const currentVersions = new Map();
+  for (const policy of currentPolicies) {
+    if (currentVersions.has(policy.policyType) || !policy.version) {
+      throw new InternalError(
+        'Current Terms and Privacy policy versions are not configured correctly',
+        'POLICY_CONFIGURATION_ERROR',
+      );
+    }
+    currentVersions.set(policy.policyType, policy.version);
+  }
+  if (REQUIRED_ORDER_POLICY_TYPES.some((type) => !currentVersions.has(type))) {
+    throw new InternalError(
+      'Current Terms and Privacy policy versions are not configured',
+      'POLICY_CONFIGURATION_ERROR',
+    );
+  }
+
+  const acceptances = await prisma.policyAcceptance.findMany({
+    where: { userId, policyType: { in: REQUIRED_ORDER_POLICY_TYPES } },
+    select: { policyType: true, version: true },
+  });
+  const missingAcceptance = REQUIRED_ORDER_POLICY_TYPES.some((policyType) =>
+    !acceptances.some(
+      (acceptance) =>
+        acceptance.policyType === policyType &&
+        acceptance.version === currentVersions.get(policyType),
+    ),
+  );
+  if (missingAcceptance) {
+    throw new ForbiddenError(
+      'Accept the current Terms and Privacy policies before placing an order',
+      'POLICY_ACCEPTANCE_REQUIRED',
+    );
+  }
 };
 
 const setConsent = async (userId, purpose, granted) => {
@@ -137,6 +179,7 @@ module.exports = {
   currentPolicies,
   setPolicyVersion,
   acceptPolicy,
+  assertCurrentOrderPoliciesAccepted,
   setConsent,
   myConsentState,
   requestDataRight,

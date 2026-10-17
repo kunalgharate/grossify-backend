@@ -1,9 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const kycService = require('../stores/kyc.service');
 const adminController = require('./admin.controller');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate, requireStaff, requireRoles } = require('../../shared/middleware/auth');
 const { auditLog } = require('../../shared/middleware/auditLog');
+const adminOffersService = require('./admin-offers.service');
 
 /**
  * @swagger
@@ -325,6 +327,70 @@ router.get('/orders', requireStaff, asyncHandler(adminController.listOrders));
 
 /**
  * @swagger
+ * /api/v1/admin/offers:
+ *   get:
+ *     summary: List offers for moderation
+ *     tags: [Admin]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: [ACTIVE, INACTIVE] }
+ *       - in: query
+ *         name: search
+ *         schema: { type: string }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, minimum: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 50 }
+ *     responses:
+ *       200: { description: Paginated offers and their stores }
+ *       403: { description: Requires staff role }
+ */
+router.get('/offers', requireStaff, asyncHandler(async (req, res) => {
+  res.json(await adminOffersService.listOffers(req.query));
+}));
+
+/**
+ * @swagger
+ * /api/v1/admin/offers/{id}/status:
+ *   patch:
+ *     summary: Activate or deactivate an offer
+ *     tags: [Admin]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [isActive]
+ *             properties:
+ *               isActive: { type: boolean }
+ *     responses:
+ *       200: { description: Offer moderation status updated }
+ *       403: { description: Requires admin or manager role }
+ *       404: { description: Offer not found }
+ */
+router.patch(
+  '/offers/:id/status',
+  requireRoles('admin', 'manager'),
+  auditLog('offers.moderate'),
+  asyncHandler(async (req, res) => {
+    const offer = await adminOffersService.setOfferActive(req.params.id, req.body?.isActive);
+    res.json({ offer, message: offer.isActive ? 'Offer activated' : 'Offer deactivated' });
+  }),
+);
+
+/**
+ * @swagger
  * /api/v1/admin/roles:
  *   get:
  *     summary: List all roles
@@ -426,7 +492,7 @@ router.get(
  *     security: [{ bearerAuth: [] }]
  *     responses: { 200: { description: KYC review queue } }
  */
-router.get('/kyc/queue', requireStaff, asyncHandler(async (req, res) => {
+router.get('/kyc/queue', requireRoles('admin', 'manager'), asyncHandler(async (req, res) => {
   const kyc = require('../stores/kyc.service');
   const queue = await kyc.kycQueue();
   res.json({ queue });
@@ -435,7 +501,7 @@ router.get('/kyc/queue', requireStaff, asyncHandler(async (req, res) => {
 /**
  * @swagger
  * /api/v1/admin/stores/{id}/kyc:
- *   get: { summary: A store's KYC status + documents, tags: [Admin], security: [{ bearerAuth: [] }] }
+ *   get: { summary: A store's KYC status + documents (admin/manager reviewer access), tags: [Admin], security: [{ bearerAuth: [] }] }
  *   post:
  *     summary: Verify or reject a store's KYC (admin/manager)
  *     tags: [Admin]
@@ -451,18 +517,54 @@ router.get('/kyc/queue', requireStaff, asyncHandler(async (req, res) => {
  *               aadhaarVerified: { type: boolean }
  *     responses: { 200: { description: Updated store KYC } }
  */
-router.get('/stores/:id/kyc', requireStaff, asyncHandler(async (req, res) => {
-  const kyc = require('../stores/kyc.service');
-  res.json(await kyc.getKyc(req.params.id));
+router.get('/stores/:id/kyc', requireRoles('admin', 'manager'), asyncHandler(async (req, res) => {
+  res.json(await kycService.getKyc(req.params.id, { reviewer: true }));
 }));
+
+/**
+ * @swagger
+ * /api/v1/admin/stores/{id}/kyc/documents/{documentId}/file:
+ *   get:
+ *     summary: Download a private KYC file for review
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: documentId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Private document file }
+ *       403: { description: Requires admin or manager }
+ *       404: { description: File unavailable or legacy document must be resubmitted }
+ */
+router.get(
+  '/stores/:id/kyc/documents/:documentId/file',
+  requireRoles('admin', 'manager'),
+  auditLog('stores.kyc.document.read'),
+  asyncHandler(async (req, res, next) => {
+    const { filePath, contentType } = await kycService.getDocumentFile(req.params.id, req.params.documentId, {
+      reviewer: true,
+    });
+    res.type(contentType);
+    res.set('Cache-Control', 'private, no-store');
+    res.download(filePath, (error) => {
+      if (error) next(error);
+    });
+  }),
+);
 
 router.post(
   '/stores/:id/kyc',
   requireRoles('admin', 'manager'),
   auditLog('stores.kyc.review'),
   asyncHandler(async (req, res) => {
-    const kyc = require('../stores/kyc.service');
-    const store = await kyc.reviewKyc(req.params.id, req.body || {});
+    const store = await kycService.reviewKyc(req.params.id, req.body || {});
     res.json({ store, message: req.body.approve ? 'KYC verified' : 'KYC rejected' });
   }),
 );

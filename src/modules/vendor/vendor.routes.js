@@ -1,12 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs');
+const fs = require('fs');
 const { prisma } = require('../../shared/database');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate } = require('../../shared/middleware/auth');
 const { BadRequestError, NotFoundError } = require('../../shared/errors');
 const { parsePagination, buildPagination } = require('../../shared/utils/pagination');
 const staffService = require('./staff.service');
+const kycService = require('../stores/kyc.service');
+const kycStorage = require('../stores/kyc-storage');
 
 /**
  * @swagger
@@ -243,7 +245,7 @@ router.get('/customers', authenticate, asyncHandler(async (req, res) => {
  * @swagger
  * /api/v1/vendor/customers/add:
  *   post:
- *     summary: Add a customer on behalf (sends temp password via SMS)
+ *     summary: Create a customer account for phone-OTP sign-in
  *     tags: [Vendor]
  *     security:
  *       - bearerAuth: []
@@ -262,43 +264,34 @@ router.get('/customers', authenticate, asyncHandler(async (req, res) => {
  *                 type: string
  *     responses:
  *       201:
- *         description: Customer created with temp password
+ *         description: Customer created; customer can sign in with phone OTP
  *       200:
  *         description: Customer already exists
  */
 router.post('/customers/add', authenticate, asyncHandler(async (req, res) => {
+  const store = await staffService.resolveActiveStore(req.user.id);
+  if (!store) throw new NotFoundError('Store not found');
+  await staffService.requireStoreRole(req.user.id, store.id, staffService.ORDER_OPERATIONS_ROLES);
+
   const { phone, name } = req.body;
   if (!phone) throw new BadRequestError('Phone number is required');
 
-  // Check if already registered
+  // Never return existing customer details from this endpoint.
   const existing = await prisma.user.findUnique({ where: { phone } });
   if (existing) {
-    return res.json({ message: 'Customer already registered', user: { id: existing.id, name: existing.name, phone: existing.phone } });
+    return res.status(200).json({ message: 'Customer already registered. They can sign in using phone OTP.' });
   }
 
-  // Generate temp password
-  const tempPassword = Math.random().toString(36).substring(2, 10);
-  const passwordHash = await bcrypt.hash(tempPassword, 12);
-
-  const customer = await prisma.user.create({
+  await prisma.user.create({
     data: {
       phone,
       name: name || null,
-      passwordHash,
-      isTempPassword: true,
       status: 'ACTIVE',
     },
-    select: { id: true, name: true, phone: true },
+    select: { id: true },
   });
 
-  // TODO: Send SMS with temp password via MSG91
-  // "Welcome to Grossify! Login: {phone}, Temp Password: {tempPassword}"
-
-  res.status(201).json({
-    customer,
-    tempPassword, // In production, this would only be sent via SMS
-    message: 'Customer created. Temp password sent via SMS.',
-  });
+  res.status(201).json({ message: 'Customer created. They can sign in using phone OTP.' });
 }));
 
 /**
@@ -516,21 +509,92 @@ router.post('/reactivate', authenticate, asyncHandler(async (req, res) => {
  * /api/v1/vendor/stores/{storeId}/kyc:
  *   get: { summary: Get a store's KYC status + documents, tags: [Vendor], security: [{ bearerAuth: [] }] }
  *   post:
- *     summary: Submit a KYC document (SHOP_ACT|AADHAAR|PAN|GSTIN|FSSAI)
+ *     summary: Upload a private KYC document (store owner only)
  *     tags: [Vendor]
  *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [type, document]
+ *             properties:
+ *               type:
+ *                 type: string
+ *                 enum: [SHOP_ACT, AADHAAR, PAN, GSTIN, FSSAI, OTHER]
+ *               document:
+ *                 type: string
+ *                 format: binary
+ *               aadhaarNumber:
+ *                 type: string
+ *                 description: Optional Aadhaar number, submitted only for AADHAAR documents.
  */
 router.get('/stores/:storeId/kyc', authenticate, asyncHandler(async (req, res) => {
-  const kyc = require('../stores/kyc.service');
-  // ownership enforced via getKyc + the submit path; read is scoped by storeId.
-  const result = await kyc.getKyc(req.params.storeId);
+  const result = await kycService.getKyc(req.params.storeId, { userId: req.user.id });
   res.json(result);
 }));
 
-router.post('/stores/:storeId/kyc', authenticate, asyncHandler(async (req, res) => {
-  const kyc = require('../stores/kyc.service');
-  const doc = await kyc.submitDocument(req.user.id, req.params.storeId, req.body || {});
-  res.status(201).json({ document: doc });
+router.post(
+  '/stores/:storeId/kyc',
+  authenticate,
+  asyncHandler(async (req, _res, next) => {
+    await kycService.requireOwnStore(req.user.id, req.params.storeId);
+    next();
+  }),
+  kycStorage.upload.single('document'),
+  asyncHandler(async (req, res) => {
+    try {
+      const document = await kycService.submitDocument(req.user.id, req.params.storeId, {
+        type: req.body.type,
+        aadhaarNumber: req.body.aadhaarNumber,
+        file: req.file,
+      });
+      res.status(201).json({ document: { id: document.id, type: document.type, status: document.status } });
+    } catch (error) {
+      if (req.file) {
+        try {
+          await fs.promises.unlink(req.file.path);
+        } catch (cleanupError) {
+          if (cleanupError.code !== 'ENOENT') console.error('Failed to clean up rejected KYC upload', cleanupError);
+        }
+      }
+      throw error;
+    }
+  }),
+);
+
+/**
+ * @swagger
+ * /api/v1/vendor/stores/{storeId}/kyc/documents/{documentId}/file:
+ *   get:
+ *     summary: Download a private KYC file as its store owner
+ *     tags: [Vendor]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: storeId
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: documentId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Private document file }
+ *       403: { description: Caller does not own the store }
+ *       404: { description: File unavailable or legacy document must be resubmitted }
+ */
+router.get('/stores/:storeId/kyc/documents/:documentId/file', authenticate, asyncHandler(async (req, res, next) => {
+  const { filePath, contentType } = await kycService.getDocumentFile(req.params.storeId, req.params.documentId, {
+    userId: req.user.id,
+  });
+  res.type(contentType);
+  res.set('Cache-Control', 'private, no-store');
+  res.download(filePath, (error) => {
+    if (error) next(error);
+  });
 }));
 
 /**

@@ -38,7 +38,7 @@ router.post('/product/:productId/assign', authenticate, asyncHandler(async (req,
 router.get('/:storeId/resolve/:code', authenticate, asyncHandler(async (req, res) => {
   const { storeId, code } = req.params;
   if (!code) throw new BadRequestError('code is required');
-  const product = await barcodeService.resolveScan(storeId, code);
+  const product = await barcodeService.resolveScan(req.user.id, storeId, code);
   res.json({ product });
 }));
 

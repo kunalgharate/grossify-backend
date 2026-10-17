@@ -1,5 +1,6 @@
 const { prisma } = require('../../shared/database');
 const { BadRequestError, NotFoundError, ForbiddenError } = require('../../shared/errors');
+const staffService = require('../vendor/staff.service');
 
 /**
  * Barcode service (Phase B2).
@@ -106,8 +107,9 @@ async function assignManufacturerBarcode(userId, productId, barcode) {
  * scan-to-bill (POS) and scan-to-purchase (GRN). Returns a lightweight product
  * shape ready to drop into a bill line or a receipt line.
  */
-async function resolveScan(storeId, barcode) {
+async function resolveScan(userId, storeId, barcode) {
   if (!storeId || !barcode) throw new BadRequestError('storeId and barcode are required');
+  await staffService.requireStoreRole(userId, storeId, ['OWNER', 'MANAGER', 'STAFF', 'CASHIER']);
   const product = await prisma.product.findFirst({
     where: { storeId, barcode: barcode.trim() },
     select: {

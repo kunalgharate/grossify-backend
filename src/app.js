@@ -7,6 +7,7 @@ const { rateLimit } = require('express-rate-limit');
 
 const swaggerUi = require('swagger-ui-express');
 const config = require('./shared/config');
+const { prisma } = require('./shared/database');
 const { swaggerSpec } = require('./shared/swagger');
 const { errorHandler, notFoundHandler } = require('./shared/middleware/errorHandler');
 
@@ -139,6 +140,17 @@ app.use('/api/v1/barcode', barcodeRoutes);
 app.use('/api/v1/restaurant', restaurantRoutes);
 
 // ─── Static uploads ───────────────────────────────────────
+// Old KYC uploads used to live in the public upload tree. Keep them inaccessible;
+// documents must be re-submitted through the authenticated private KYC endpoint.
+app.use('/uploads/kyc', (_req, res) => res.sendStatus(404));
+app.use('/uploads', async (req, res, next) => {
+  const legacyKycDocument = await prisma.kycDocument.findFirst({
+    where: { url: `/uploads${req.path}` },
+    select: { id: true },
+  });
+  if (legacyKycDocument) return res.sendStatus(404);
+  next();
+});
 app.use('/uploads', express.static('uploads'));
 
 // ─── Error Handling ───────────────────────────────────────
