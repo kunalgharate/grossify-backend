@@ -51,6 +51,10 @@ const restaurantRoutes = require('./modules/restaurant/restaurant.routes');
 
 const app = express();
 
+// Trust only the configured number of known reverse-proxy hops so rate limits
+// use the client IP forwarded by the deployment proxy, not the proxy address.
+app.set('trust proxy', config.trustProxyHops);
+
 // ─── Security ─────────────────────────────────────────────
 app.use(helmet());
 

@@ -1,8 +1,17 @@
 require('dotenv').config();
 
+const trustProxyHops = process.env.TRUST_PROXY_HOPS === undefined
+  ? 0
+  : Number(process.env.TRUST_PROXY_HOPS);
+
+if (!Number.isInteger(trustProxyHops) || trustProxyHops < 0) {
+  throw new Error('TRUST_PROXY_HOPS must be a non-negative integer');
+}
+
 const config = {
   port: parseInt(process.env.PORT, 10) || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
+  trustProxyHops,
   // Platform economics: no commission on merchant sales (subscription model);
   // Grossify's only order-level cut is on GROSSIFY-fulfilled delivery.
   delivery: {

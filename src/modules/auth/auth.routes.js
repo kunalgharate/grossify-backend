@@ -1,4 +1,5 @@
 const express = require('express');
+const { createHash } = require('crypto');
 const router = express.Router();
 const { rateLimit } = require('express-rate-limit');
 const authController = require('./auth.controller');
@@ -7,17 +8,44 @@ const config = require('../../shared/config');
 const { asyncHandler } = require('../../shared/utils/asyncHandler');
 const { authenticate } = require('../../shared/middleware/auth');
 
-// Stricter limiter for OTP endpoints: these trigger SMS (cost) and are a common
-// abuse/enumeration target, so they get a tighter cap than the global /api limiter.
-// Local fixed-OTP development does not send SMS and should not lock out testers.
-const otpLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000, // 10 minutes
-  max: 5, // 5 OTP attempts per IP per window
+const OTP_WINDOW_MS = 10 * 60 * 1000;
+const otpLimitMessage = (req, res) => {
+  const resetTime = req.rateLimit?.resetTime;
+  const retryAfterSeconds = resetTime
+    ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+    : Math.ceil(OTP_WINDOW_MS / 1000);
+  const retryAfterMinutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+  res.setHeader('Retry-After', String(retryAfterSeconds));
+  res.status(429).json({
+    error: 'TOO_MANY_REQUESTS',
+    message: `Too many OTP requests. Try again in about ${retryAfterMinutes} minute${retryAfterMinutes === 1 ? '' : 's'}.`,
+    retryAfterSeconds,
+  });
+};
+
+const phoneKeyGenerator = (req) => {
+  let digits = String(req.body?.phone ?? '').replace(/\D/g, '');
+  if (digits.length === 10) digits = `91${digits}`;
+  return createHash('sha256').update(digits || 'missing-phone').digest('hex');
+};
+
+const createOtpLimiter = ({ max, keyGenerator }) => rateLimit({
+  windowMs: OTP_WINDOW_MS,
+  max,
+  ...(keyGenerator ? { keyGenerator } : {}),
   skip: () => config.nodeEnv !== 'production' && msg91.isDemoMode,
-  message: { error: 'TOO_MANY_REQUESTS', message: 'Too many OTP requests. Try again in a few minutes.' },
+  handler: otpLimitMessage,
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Keep an IP-wide abuse ceiling while avoiding a shared SMS/verification budget
+// for every customer behind the same office, carrier, or hosting NAT.
+const sendOtpIpLimiter = createOtpLimiter({ max: 20 });
+const sendOtpPhoneLimiter = createOtpLimiter({ max: 5, keyGenerator: phoneKeyGenerator });
+const verifyOtpIpLimiter = createOtpLimiter({ max: 30 });
+const verifyOtpPhoneLimiter = createOtpLimiter({ max: 10, keyGenerator: phoneKeyGenerator });
+const widgetOtpIpLimiter = createOtpLimiter({ max: 20 });
 
 /**
  * @swagger
@@ -99,6 +127,7 @@ router.post('/login', asyncHandler(authController.login));
  *       
  *       **Development Demo Mode:** Outside production, when MSG91_AUTH_KEY is not configured (or set to 'xxx'/'demo'),
  *       the API runs in demo mode — no real SMS is sent and the OTP is always `123456`.
+ *       Production limits OTP sends to 5 per phone and 20 per client IP in 10 minutes.
  *     tags: [Auth]
  *     requestBody:
  *       required: true
@@ -128,8 +157,10 @@ router.post('/login', asyncHandler(authController.login));
  *                   example: "+919876543210"
  *       400:
  *         description: Phone number is required
+ *       429:
+ *         description: OTP limit reached; retry after the returned Retry-After cooldown
  */
-router.post('/send-otp', otpLimiter, asyncHandler(authController.sendOtp));
+router.post('/send-otp', sendOtpIpLimiter, sendOtpPhoneLimiter, asyncHandler(authController.sendOtp));
 
 /**
  * @swagger
@@ -141,6 +172,7 @@ router.post('/send-otp', otpLimiter, asyncHandler(authController.sendOtp));
  *       Returns JWT access and refresh tokens on success.
  *       
  *       **Development Demo Mode:** Use OTP `123456` when MSG91_AUTH_KEY is not configured outside production.
+ *       Production limits verification to 10 attempts per phone and 30 per client IP in 10 minutes.
  *     tags: [Auth]
  *     requestBody:
  *       required: true
@@ -184,8 +216,10 @@ router.post('/send-otp', otpLimiter, asyncHandler(authController.sendOtp));
  *                   type: string
  *       401:
  *         description: Invalid or expired OTP
+ *       429:
+ *         description: OTP verification limit reached; retry after the returned Retry-After cooldown
  */
-router.post('/verify-otp', otpLimiter, asyncHandler(authController.verifyOtp));
+router.post('/verify-otp', verifyOtpIpLimiter, verifyOtpPhoneLimiter, asyncHandler(authController.verifyOtp));
 
 /**
  * @swagger
@@ -243,7 +277,7 @@ router.post('/verify-otp', otpLimiter, asyncHandler(authController.verifyOtp));
  *       401:
  *         description: Invalid or expired widget token
  */
-router.post('/verify-widget-token', otpLimiter, asyncHandler(authController.verifyWidgetToken));
+router.post('/verify-widget-token', widgetOtpIpLimiter, asyncHandler(authController.verifyWidgetToken));
 
 /**
  * @swagger
