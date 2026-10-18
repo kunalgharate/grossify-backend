@@ -8,10 +8,32 @@ if (!Number.isInteger(trustProxyHops) || trustProxyHops < 0) {
   throw new Error('TRUST_PROXY_HOPS must be a non-negative integer');
 }
 
+const normalizeDemoOtpPhone = (phone) => {
+  let digits = phone.replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 15) {
+    throw new Error(`Invalid phone number in DEMO_OTP_ALLOWED_PHONES: ${phone}`);
+  }
+  if (digits.length === 10) digits = `91${digits}`;
+  return `+${digits}`;
+};
+
+const demoOtpAllowedPhones = (process.env.DEMO_OTP_ALLOWED_PHONES || '')
+  .split(',')
+  .map((phone) => phone.trim())
+  .filter(Boolean)
+  .map(normalizeDemoOtpPhone);
+const demoOtpEnabled = process.env.DEMO_OTP_ENABLED === 'true';
+
+if (demoOtpEnabled && demoOtpAllowedPhones.length === 0) {
+  throw new Error('DEMO_OTP_ALLOWED_PHONES must contain at least one phone when DEMO_OTP_ENABLED=true');
+}
+
 const config = {
   port: parseInt(process.env.PORT, 10) || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
   trustProxyHops,
+  demoOtpEnabled,
+  demoOtpAllowedPhones,
   // Platform economics: no commission on merchant sales (subscription model);
   // Grossify's only order-level cut is on GROSSIFY-fulfilled delivery.
   delivery: {

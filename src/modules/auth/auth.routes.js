@@ -125,8 +125,8 @@ router.post('/login', asyncHandler(authController.login));
  *     description: |
  *       Sends a 6-digit OTP to the provided phone number via MSG91.
  *       
- *       **Development Demo Mode:** Outside production, when MSG91_AUTH_KEY is not configured (or set to 'xxx'/'demo'),
- *       the API runs in demo mode — no real SMS is sent and the OTP is always `123456`.
+ *       **Demo Mode:** The API can use OTP `123456` for phones listed in `DEMO_OTP_ALLOWED_PHONES`;
+ *       no real SMS is sent. In production this requires the explicit `DEMO_OTP_ENABLED=true` opt-in.
  *       Production limits OTP sends to 5 per phone and 20 per client IP in 10 minutes.
  *     tags: [Auth]
  *     requestBody:
@@ -171,7 +171,7 @@ router.post('/send-otp', sendOtpIpLimiter, sendOtpPhoneLimiter, asyncHandler(aut
  *       Verifies the OTP sent to the phone number. If the user doesn't exist, a new account is created automatically.
  *       Returns JWT access and refresh tokens on success.
  *       
- *       **Development Demo Mode:** Use OTP `123456` when MSG91_AUTH_KEY is not configured outside production.
+ *       **Demo Mode:** Use OTP `123456` for allowlisted phones when demo OTP is enabled.
  *       Production limits verification to 10 attempts per phone and 30 per client IP in 10 minutes.
  *     tags: [Auth]
  *     requestBody:
@@ -188,7 +188,7 @@ router.post('/send-otp', sendOtpIpLimiter, sendOtpPhoneLimiter, asyncHandler(aut
  *                 example: "+919876543210"
  *               otp:
  *                 type: string
- *                 description: 6-digit OTP (use 123456 in demo mode)
+ *                 description: 6-digit OTP (use 123456 only for allowlisted phones when demo OTP is enabled)
  *                 example: "123456"
  *     responses:
  *       200:

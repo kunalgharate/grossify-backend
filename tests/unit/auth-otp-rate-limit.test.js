@@ -45,6 +45,8 @@ describe('OTP rate limiting', () => {
   const originalProcessEnv = {
     nodeEnv: process.env.NODE_ENV,
     msg91AuthKey: process.env.MSG91_AUTH_KEY,
+    demoOtpEnabled: process.env.DEMO_OTP_ENABLED,
+    demoOtpAllowedPhones: process.env.DEMO_OTP_ALLOWED_PHONES,
   };
 
   afterEach(() => {
@@ -53,25 +55,45 @@ describe('OTP rate limiting', () => {
     else process.env.NODE_ENV = originalProcessEnv.nodeEnv;
     if (originalProcessEnv.msg91AuthKey === undefined) delete process.env.MSG91_AUTH_KEY;
     else process.env.MSG91_AUTH_KEY = originalProcessEnv.msg91AuthKey;
+    if (originalProcessEnv.demoOtpEnabled === undefined) delete process.env.DEMO_OTP_ENABLED;
+    else process.env.DEMO_OTP_ENABLED = originalProcessEnv.demoOtpEnabled;
+    if (originalProcessEnv.demoOtpAllowedPhones === undefined) delete process.env.DEMO_OTP_ALLOWED_PHONES;
+    else process.env.DEMO_OTP_ALLOWED_PHONES = originalProcessEnv.demoOtpAllowedPhones;
   });
 
-  test('uses the fixed OTP in development without an MSG91 key', async () => {
+  test('uses the fixed OTP only for allowlisted demo phones in development', async () => {
     process.env.NODE_ENV = 'development';
     process.env.MSG91_AUTH_KEY = '';
+    process.env.DEMO_OTP_ALLOWED_PHONES = '+919000000001,+919000000002,+919000000004,+919000000005';
 
     let msg91;
     jest.isolateModules(() => {
       msg91 = jest.requireActual('../../src/modules/auth/msg91.service');
     });
 
-    await expect(msg91.sendOtp('+919900009988')).resolves.toMatchObject({ success: true });
-    await expect(msg91.verifyOtp('+919900009988', '123456')).resolves.toMatchObject({ success: true });
-    await expect(msg91.verifyOtp('+919900009988', '000000')).resolves.toMatchObject({ success: false });
+    for (const phone of [
+      '+919000000001',
+      '+919000000002',
+      '+919000000004',
+      '+919000000005',
+    ]) {
+      await expect(msg91.sendOtp(phone)).resolves.toMatchObject({ success: true });
+      await expect(msg91.verifyOtp(phone, '123456')).resolves.toMatchObject({ success: true });
+    }
+    await expect(msg91.sendOtp('9000000001')).resolves.toMatchObject({ success: true });
+    await expect(msg91.verifyOtp('+919000000001', '000000')).resolves.toMatchObject({ success: false });
+    await expect(msg91.sendOtp('+919000000011')).resolves.toMatchObject({
+      success: false,
+      message: 'Demo OTP is not enabled for this phone number',
+    });
+    await expect(msg91.verifyOtp('+919000000011', '123456')).resolves.toMatchObject({ success: false });
   });
 
   test('does not enable the fixed OTP fallback in production', () => {
     process.env.NODE_ENV = 'production';
     process.env.MSG91_AUTH_KEY = '';
+    process.env.DEMO_OTP_ENABLED = 'false';
+    process.env.DEMO_OTP_ALLOWED_PHONES = '';
 
     let msg91;
     jest.isolateModules(() => {
@@ -79,6 +101,46 @@ describe('OTP rate limiting', () => {
     });
 
     expect(msg91.isDemoMode).toBe(false);
+  });
+
+  test('allows fixed OTP in production only for explicitly enabled demo accounts', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.MSG91_AUTH_KEY = '';
+    process.env.DEMO_OTP_ENABLED = 'true';
+    process.env.DEMO_OTP_ALLOWED_PHONES = '+919000000001,+919000000002,+919000000004,+919000000005';
+
+    let msg91;
+    jest.isolateModules(() => {
+      msg91 = jest.requireActual('../../src/modules/auth/msg91.service');
+    });
+
+    expect(msg91.isDemoMode).toBe(false);
+    for (const phone of [
+      '+919000000001',
+      '+919000000002',
+      '+919000000004',
+      '+919000000005',
+    ]) {
+      await expect(msg91.sendOtp(phone)).resolves.toMatchObject({ success: true });
+      await expect(msg91.verifyOtp(phone, '123456')).resolves.toMatchObject({ success: true });
+    }
+    await expect(msg91.sendOtp('+919000000011')).resolves.toMatchObject({
+      success: false,
+      message: 'Demo OTP is not enabled for this phone number',
+    });
+    await expect(msg91.verifyOtp('+919000000011', '123456')).resolves.toMatchObject({ success: false });
+  });
+
+  test('requires an allowlist when production demo OTP is enabled', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.DEMO_OTP_ENABLED = 'true';
+    process.env.DEMO_OTP_ALLOWED_PHONES = '';
+
+    expect(() => {
+      jest.isolateModules(() => {
+        jest.requireActual('../../src/shared/config');
+      });
+    }).toThrow('DEMO_OTP_ALLOWED_PHONES must contain at least one phone');
   });
 
   test('does not rate-limit fixed demo OTP requests in development', async () => {

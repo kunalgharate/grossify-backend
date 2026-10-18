@@ -1,5 +1,6 @@
 /**
- * Demo accounts for portal logins (OTP = 123456 in demo mode).
+ * Demo accounts for portal logins (OTP = 123456 in non-production demo mode
+ * when the number is in DEMO_OTP_ALLOWED_PHONES).
  * Idempotent: safe to re-run. Creates/ensures:
  *   - Admin  : phone +919000000001  -> Super Admin role (logical 'admin')
  *   - Seller : phone +919000000002  -> owns an ACTIVE, KYC-VERIFIED store (logical 'vendor')

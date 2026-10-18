@@ -7,9 +7,22 @@ const MSG91_BASE = 'https://control.msg91.com/api/v5';
 const isDemoMode = config.nodeEnv !== 'production' &&
   (!config.msg91.authKey || config.msg91.authKey === 'xxx' || config.msg91.authKey === 'demo');
 const DEMO_OTP = '123456'; // Fixed OTP for demo/development
+const demoOtpAllowedPhones = new Set(config.demoOtpAllowedPhones);
+
+const isDemoPhoneAllowed = (phone) => {
+  let digits = phone.replace(/\D/g, '');
+  if (digits.length === 10) digits = `91${digits}`;
+  return demoOtpAllowedPhones.has(digits ? `+${digits}` : '');
+};
+
+const isDemoOtpEnabledForPhone = (phone) =>
+  isDemoPhoneAllowed(phone) && (isDemoMode || config.demoOtpEnabled);
 
 if (isDemoMode) {
-  console.warn('[MSG91] ⚠️  Running in DEMO mode — OTP is always 123456, no real SMS sent');
+  console.warn('[MSG91] ⚠️  Running in DEMO mode — fixed OTP only works for DEMO_OTP_ALLOWED_PHONES');
+}
+if (config.demoOtpEnabled) {
+  console.warn('[MSG91] ⚠️  DEMO_OTP_ENABLED is on — fixed OTP works only for DEMO_OTP_ALLOWED_PHONES; MSG91 is disabled');
 }
 
 /**
@@ -20,8 +33,20 @@ const sendOtp = async (phone) => {
   // Strip + and spaces
   const mobile = phone.replace(/[+\s]/g, '');
 
-  // Demo mode — skip actual API call
+  // Explicit demo switch disables MSG91 and fails closed outside the phone allowlist.
+  if (config.demoOtpEnabled) {
+    if (!isDemoOtpEnabledForPhone(phone)) {
+      return { success: false, message: 'Demo OTP is not enabled for this phone number' };
+    }
+    console.log(`[MSG91 DEMO] OTP for ${mobile}: ${DEMO_OTP}`);
+    return { success: true, type: 'success', message: 'OTP sent (demo mode)' };
+  }
+
+  // Development demo mode — never send real SMS without credentials.
   if (isDemoMode) {
+    if (!isDemoOtpEnabledForPhone(phone)) {
+      return { success: false, message: 'Demo OTP is not enabled for this phone number' };
+    }
     console.log(`[MSG91 DEMO] OTP for ${mobile}: ${DEMO_OTP}`);
     return { success: true, type: 'success', message: 'OTP sent (demo mode)' };
   }
@@ -52,8 +77,22 @@ const verifyOtp = async (phone, otp) => {
   const mobile = phone.replace(/[+\s]/g, '');
   const otpStr = String(otp); // Ensure OTP is always compared as string
 
-  // Demo mode — accept fixed OTP
+  // Explicit demo switch disables MSG91 verification and fails closed outside the allowlist.
+  if (config.demoOtpEnabled) {
+    if (!isDemoOtpEnabledForPhone(phone)) {
+      return { success: false, message: 'Demo OTP is not enabled for this phone number' };
+    }
+    if (otpStr === DEMO_OTP) {
+      return { success: true, message: 'OTP verified (demo mode)' };
+    }
+    return { success: false, message: 'Invalid OTP (demo mode — use 123456)' };
+  }
+
+  // Development demo mode.
   if (isDemoMode) {
+    if (!isDemoOtpEnabledForPhone(phone)) {
+      return { success: false, message: 'Demo OTP is not enabled for this phone number' };
+    }
     if (otpStr === DEMO_OTP) {
       return { success: true, message: 'OTP verified (demo mode)' };
     }
