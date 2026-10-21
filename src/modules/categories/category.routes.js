@@ -179,6 +179,66 @@ router.delete(
 
 /**
  * @swagger
+ * /api/v1/categories/admin/{id}/hard:
+ *   delete:
+ *     summary: Permanently delete a deactivated, unreferenced category
+ *     tags: [Categories]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Category permanently deleted
+ *       400:
+ *         description: Category is active or still referenced by other records
+ *       404:
+ *         description: Category not found
+ */
+router.delete(
+  '/admin/:id/hard',
+  authenticate,
+  requireRoles('admin', 'manager'),
+  auditLog('categories.hardDelete'),
+  asyncHandler(async (req, res) => {
+    const category = await categoryService.remove(req.params.id);
+    await invalidateCache('cache:/api/v1/categories*');
+    res.json({ category, message: 'Category permanently deleted' });
+  }),
+);
+
+/**
+ * @swagger
+ * /api/v1/categories/admin/{id}:
+ *   get:
+ *     summary: Get a single category by id (staff view)
+ *     tags: [Categories]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Category details
+ *       403:
+ *         description: Requires a staff role
+ *       404:
+ *         description: Category not found
+ */
+router.get('/admin/:id', authenticate, requireStaff, asyncHandler(async (req, res) => {
+  const category = await categoryService.getById(req.params.id);
+  res.json({ category });
+}));
+
+/**
+ * @swagger
  * /api/v1/categories/{slug}:
  *   get:
  *     summary: Get category by slug

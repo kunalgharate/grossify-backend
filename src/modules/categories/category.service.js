@@ -61,12 +61,25 @@ async function assertSlugAvailable(slug, excludingId) {
   if (existing && existing.id !== excludingId) throw new ConflictError('A category with this slug already exists');
 }
 
-async function listAdmin({ page = 1, limit = 50 } = {}) {
+async function listAdmin({ page = 1, limit = 50, status, search } = {}) {
   const safePage = Number.isInteger(Number(page)) && Number(page) > 0 ? Number(page) : 1;
   const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0
     ? Math.min(Number(limit), 100)
     : 50;
   const where = {};
+  // Filter 
+  if (status === 'active') where.isActive = true;
+  else if (status === 'inactive') where.isActive = false;
+
+   // Search by category name or slug
+  const term = typeof search === 'string' ? search.trim() : '';
+  if (term) {
+    where.OR = [
+      { name: { contains: term, mode: 'insensitive' } },
+      { slug: { contains: term, mode: 'insensitive' } },
+    ];
+  }
+
   const [categories, total] = await Promise.all([
     prisma.category.findMany({
       where,
@@ -85,6 +98,15 @@ async function listAdmin({ page = 1, limit = 50 } = {}) {
       hasNext: safePage * safeLimit < total,
     },
   };
+}
+
+async function getById(id) {
+  const category = await prisma.category.findUnique({
+    where: { id },
+    include: { children: { orderBy: { sortOrder: 'asc' } }, parent: true },
+  });
+  if (!category) throw new NotFoundError('Category not found');
+  return category;
 }
 
 async function create(data = {}) {
@@ -168,4 +190,25 @@ async function deactivate(id) {
   return prisma.category.update({ where: { id }, data: { isActive: false } });
 }
 
-module.exports = { listAdmin, create, update, deactivate, slugFromName };
+async function remove(id) {
+  const category = await prisma.category.findUnique({ where: { id } });
+  if (!category) throw new NotFoundError('Category not found');
+  if (category.isActive) throw new BadRequestError('Deactivate the category before deleting it');
+
+  const [children, products, stores, masterProducts] = await Promise.all([
+    prisma.category.count({ where: { parentId: id } }),
+    prisma.product.count({ where: { categoryId: id } }),
+    prisma.store.count({ where: { categoryId: id } }),
+    prisma.masterProduct.count({ where: { categoryId: id } }),
+  ]);
+  const blockers = { children, products, stores, masterProducts };
+  const inUse = Object.entries(blockers).filter(([, n]) => n > 0);
+  if (inUse.length) {
+    throw new BadRequestError(
+      `Category is referenced by ${inUse.map(([k, n]) => `${k} (${n})`).join(', ')}`,
+    );
+  }
+  return prisma.category.delete({ where: { id } });
+}
+
+module.exports = { listAdmin, getById, create, update, deactivate, remove, slugFromName };
