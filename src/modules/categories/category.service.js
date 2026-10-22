@@ -195,20 +195,22 @@ async function remove(id) {
   if (!category) throw new NotFoundError('Category not found');
   if (category.isActive) throw new BadRequestError('Deactivate the category before deleting it');
 
-  const [children, products, stores, masterProducts] = await Promise.all([
+  const [children, products, stores, masterProducts, priceListItems, customerCatalogs] = await Promise.all([
     prisma.category.count({ where: { parentId: id } }),
     prisma.product.count({ where: { categoryId: id } }),
     prisma.store.count({ where: { categoryId: id } }),
     prisma.masterProduct.count({ where: { categoryId: id } }),
+    prisma.priceListItem.count({ where: { categoryId: id } }),
+    prisma.customerCatalog.count({ where: { categoryId: id } }),
   ]);
-  const blockers = { children, products, stores, masterProducts };
+  const blockers = { children, products, stores, masterProducts, priceListItems, customerCatalogs };
   const inUse = Object.entries(blockers).filter(([, n]) => n > 0);
   if (inUse.length) {
     throw new BadRequestError(
       `Category is referenced by ${inUse.map(([k, n]) => `${k} (${n})`).join(', ')}`,
     );
   }
-  return prisma.category.delete({ where: { id } });
+  return prisma.category.delete({ where: { id, isActive: false, }, });
 }
 
 module.exports = { listAdmin, getById, create, update, deactivate, remove, slugFromName };
