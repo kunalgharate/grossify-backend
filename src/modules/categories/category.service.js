@@ -61,7 +61,7 @@ async function assertSlugAvailable(slug, excludingId) {
   if (existing && existing.id !== excludingId) throw new ConflictError('A category with this slug already exists');
 }
 
-async function listAdmin({ page = 1, limit = 50, status, search } = {}) {
+async function listAdmin({ page = 1, limit = 50, status, type, search, } = {}) {
   const safePage = Number.isInteger(Number(page)) && Number(page) > 0 ? Number(page) : 1;
   const safeLimit = Number.isInteger(Number(limit)) && Number(limit) > 0
     ? Math.min(Number(limit), 100)
@@ -70,6 +70,10 @@ async function listAdmin({ page = 1, limit = 50, status, search } = {}) {
   // Filter 
   if (status === 'active') where.isActive = true;
   else if (status === 'inactive') where.isActive = false;
+
+  // Filter by hierarchy level
+  if (type === 'parent') where.parentId = null;
+  else if (type === 'child') where.parentId = { not: null };
 
    // Search by category name or slug
   const term = typeof search === 'string' ? search.trim() : '';
@@ -84,6 +88,7 @@ async function listAdmin({ page = 1, limit = 50, status, search } = {}) {
     prisma.category.findMany({
       where,
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      include: {parent: true},
       skip: (safePage - 1) * safeLimit,
       take: safeLimit,
     }),
